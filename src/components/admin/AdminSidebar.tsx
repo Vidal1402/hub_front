@@ -3,7 +3,7 @@ import logo from "@/assets/logo.png";
 import {
   LayoutDashboard, Users, Kanban, UserCog, CreditCard, Package,
   TrendingUp, AlertTriangle, FileText, Settings, ChevronLeft,
-  ChevronRight, LogOut, Menu, X,
+  ChevronRight, LogOut, Menu, X, Lock,
 } from "lucide-react";
 
 const ICONS: Record<string, React.ElementType> = {
@@ -11,15 +11,21 @@ const ICONS: Record<string, React.ElementType> = {
   TrendingUp, AlertTriangle, FileText, Settings,
 };
 
-const ADMIN_NAV = [
+const ADMIN_NAV: {
+  id: string;
+  label: string;
+  icon: string;
+  badge?: string;
+  comingSoon?: boolean;
+}[] = [
   { id: "visao-geral", label: "Visão Geral", icon: "LayoutDashboard" },
   { id: "clientes", label: "Clientes", icon: "Users" },
   { id: "producao", label: "Produção", icon: "Kanban" },
-  { id: "colaboradores", label: "Colaboradores", icon: "UserCog" },
+  { id: "colaboradores", label: "Colaboradores", icon: "UserCog", comingSoon: true },
   { id: "financeiro", label: "Financeiro", icon: "CreditCard" },
   { id: "produtos", label: "Produtos / Planos", icon: "Package" },
   { id: "comercial", label: "Comercial", icon: "TrendingUp" },
-  { id: "alertas", label: "Alertas", icon: "AlertTriangle" },
+  { id: "alertas", label: "Alertas", icon: "AlertTriangle", comingSoon: true },
   { id: "relatorios", label: "Relatórios", icon: "FileText" },
   { id: "config", label: "Configurações", icon: "Settings" },
 ];
@@ -56,10 +62,34 @@ export function AdminSidebar({ page, setPage, collapsed, setCollapsed, mobileOpe
         {ADMIN_NAV.map((item) => {
           const Icon = ICONS[item.icon];
           const active = page === item.id;
+          if (item.comingSoon) {
+            return (
+              <button
+                key={item.id}
+                type="button"
+                disabled
+                aria-disabled="true"
+                title={collapsed && !isMobile ? `${item.label} — em breve` : undefined}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium border-none cursor-not-allowed opacity-65 text-text-3 bg-transparent"
+              >
+                <Lock size={18} className="shrink-0" aria-hidden />
+                {(!collapsed || isMobile) && (
+                  <span className="flex-1 text-left min-w-0">
+                    <span className="block truncate text-text-2">{item.label}</span>
+                    <span className="block text-[10px] font-normal text-text-3 truncate">Em breve</span>
+                  </span>
+                )}
+              </button>
+            );
+          }
           return (
             <button
               key={item.id}
-              onClick={() => { setPage(item.id); if (isMobile) setMobileOpen(false); }}
+              type="button"
+              onClick={() => {
+                setPage(item.id);
+                if (isMobile) setMobileOpen(false);
+              }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium border-none cursor-pointer transition-all
                 ${active ? "bg-primary/10 text-primary font-semibold" : "bg-transparent text-text-2 hover:bg-muted hover:text-text-1"}`}
               title={collapsed && !isMobile ? item.label : undefined}

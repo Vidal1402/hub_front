@@ -5,10 +5,8 @@ import { DashboardPage } from "./DashboardPage";
 import { ProducaoPage } from "./ProducaoPage";
 import { PerformancePage } from "./PerformancePage";
 import { RelatoriosPage } from "./RelatoriosPage";
-import { MateriaisPage } from "./MateriaisPage";
 import { FinanceiroPage } from "./FinanceiroPage";
 import { PlanosPage } from "./PlanosPage";
-import { AcademyPage } from "./AcademyPage";
 import { SuportePage } from "./SuportePage";
 import { ConfigPage } from "./ConfigPage";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -31,17 +29,39 @@ const NAV_ICONS: Record<string, React.ReactNode> = {
   Settings: <Settings size={16} />,
 };
 
-const NAV = [
+type PortalNavItem = {
+  id: string;
+  icon: string;
+  label: string;
+  b?: number;
+  comingSoon?: boolean;
+};
+
+const NAV: PortalNavItem[] = [
   { id: "dashboard", icon: "LayoutDashboard", label: "Dashboard", b: 0 },
   { id: "producao", icon: "Kanban", label: "Produção" },
   { id: "relatorios", icon: "BarChart3", label: "Relatórios" },
-  { id: "materiais", icon: "FolderOpen", label: "Materiais" },
+  { id: "materiais", icon: "FolderOpen", label: "Materiais", comingSoon: true },
   { id: "financeiro", icon: "CreditCard", label: "Financeiro" },
   { id: "planos", icon: "Crown", label: "Planos" },
-  { id: "academy", icon: "GraduationCap", label: "Academy" },
+  { id: "academy", icon: "GraduationCap", label: "Academy", comingSoon: true },
   { id: "suporte", icon: "LifeBuoy", label: "Suporte", b: 0 },
   { id: "config", icon: "Settings", label: "Configurações" },
 ];
+
+function SecaoEmBrevePortal({ titulo }: { titulo: string }) {
+  return (
+    <div className="flex min-h-[55vh] flex-col items-center justify-center gap-4 px-4 text-center">
+      <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-surface-3 text-text-3">
+        <Lock className="h-8 w-8" aria-hidden />
+      </div>
+      <div>
+        <h2 className="text-lg font-semibold text-text-1">{titulo}</h2>
+        <p className="mt-2 text-sm text-text-3">Em breve</p>
+      </div>
+    </div>
+  );
+}
 
 function SidebarContent({
   page,
@@ -84,28 +104,43 @@ function SidebarContent({
       </div>
       <nav className="flex-1 px-3 py-2 overflow-y-auto">
         {NAV.map((item) => {
-          const isLocked = !!(item as any).locked;
+          if (item.comingSoon) {
+            return (
+              <button
+                key={item.id}
+                type="button"
+                disabled
+                aria-disabled="true"
+                className="mb-0.5 flex w-full cursor-not-allowed items-center gap-3 rounded-lg border-none bg-transparent px-3 py-2.5 text-left text-xs font-semibold opacity-65 text-text-3"
+              >
+                <span className="flex w-5 shrink-0 items-center justify-center" aria-hidden>
+                  <Lock size={16} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-text-2">{item.label}</span>
+                  <span className="block truncate text-[10px] font-normal text-text-3">Em breve</span>
+                </span>
+              </button>
+            );
+          }
           return (
             <button
               key={item.id}
+              type="button"
               onClick={() => {
-                if (!isLocked) {
-                  setPage(item.id);
-                  onClose?.();
-                }
+                setPage(item.id);
+                onClose?.();
               }}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer border-none transition-all mb-0.5
-                ${isLocked ? "opacity-50 cursor-not-allowed" : ""}
-                ${page === item.id && !isLocked ? "bg-surface-3 text-text-1" : "bg-transparent text-text-3 hover:bg-surface-3 hover:text-text-2"}`}
+              className={`mb-0.5 flex w-full cursor-pointer items-center gap-3 rounded-lg border-none px-3 py-2.5 text-left text-xs font-semibold transition-all
+                ${page === item.id ? "bg-surface-3 text-text-1" : "bg-transparent text-text-3 hover:bg-surface-3 hover:text-text-2"}`}
             >
-              <span className="w-5 flex items-center justify-center">{NAV_ICONS[item.icon]}</span>
-              <span className="flex-1 text-left">{item.label}</span>
-              {isLocked && <Lock size={12} className="text-text-4" />}
-              {item.b && !isLocked && (
-                <span className="text-[9px] font-bold bg-primary text-primary-foreground w-4 h-4 rounded-full flex items-center justify-center">
+              <span className="flex w-5 shrink-0 items-center justify-center">{NAV_ICONS[item.icon]}</span>
+              <span className="flex-1 truncate">{item.label}</span>
+              {item.b ? (
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground">
                   {item.b}
                 </span>
-              )}
+              ) : null}
             </button>
           );
         })}
@@ -197,10 +232,10 @@ export function PortalLayout() {
         <div className="p-4 md:p-8">
           {page === "dashboard" && <DashboardPage onNav={navigatePortal} />}
           {page === "relatorios" && <RelatoriosPage />}
-          {page === "materiais" && <MateriaisPage />}
+          {page === "materiais" && <SecaoEmBrevePortal titulo="Materiais" />}
           {page === "financeiro" && <FinanceiroPage />}
           {page === "planos" && <PlanosPage />}
-          {page === "academy" && <AcademyPage />}
+          {page === "academy" && <SecaoEmBrevePortal titulo="Academy" />}
           {page === "suporte" && <SuportePage />}
           {page === "config" && <ConfigPage />}
           {page === "producao" && (

@@ -5,6 +5,7 @@ import {
   metricsFromApiRow,
   type MarketingMetricsApiRow,
 } from "@/components/marketing/MarketingMetricsBoard";
+import { normalizeClientReportFromApi } from "@/lib/clientReportsApi";
 import { useApiData } from "@/hooks/useApiData";
 import { useAuth } from "@/hooks/useAuth";
 import { PageHeader, PortalCard } from "./Primitives";
@@ -130,10 +131,30 @@ export function RelatoriosPage() {
     if (!linkedClient?.id) return normalized;
     return normalized.filter((row) => row.client_id == null || row.client_id === linkedClient.id);
   }, [marketingMetrics.data, linkedClient?.id]);
+  const publishedNormalized = useMemo(() => {
+    const list = Array.isArray(published.data) ? published.data : [];
+    return list
+      .filter((row): row is Record<string, unknown> => row != null && typeof row === "object" && !Array.isArray(row))
+      .map((row) => {
+        const n = normalizeClientReportFromApi(row);
+        const out: PublishedReport = {
+          id: Number(n.id) || 0,
+          title: n.title,
+          url: n.url,
+          description: n.description || null,
+          summary: n.summary,
+          period_label: n.period_label,
+          client_id: Number(n.client_id) || undefined,
+          created_at: n.created_at,
+        };
+        return out;
+      });
+  }, [published.data]);
+
   const publishedRows = useMemo(() => {
-    if (!linkedClient?.id) return published.data;
-    return published.data.filter((r) => r.client_id == null || r.client_id === linkedClient.id);
-  }, [published.data, linkedClient?.id]);
+    if (!linkedClient?.id) return publishedNormalized;
+    return publishedNormalized.filter((r) => r.client_id == null || r.client_id === linkedClient.id);
+  }, [publishedNormalized, linkedClient?.id]);
   useEffect(() => {
     if (metricsRows.length === 0) return;
     setMetricsIndex((i) => Math.min(i, metricsRows.length - 1));

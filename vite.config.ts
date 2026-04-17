@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       host: "::",
-      port: 8080,
+      port: 8082,
       hmr: {
         overlay: false,
       },
@@ -20,6 +20,14 @@ export default defineConfig(({ mode }) => {
           target: apiProxyTarget,
           changeOrigin: true,
           secure: true,
+          configure: (proxy) => {
+            proxy.on("proxyReq", (proxyReq, req) => {
+              const authorization = req.headers.authorization;
+              if (authorization) {
+                proxyReq.setHeader("authorization", authorization);
+              }
+            });
+          },
         },
       },
     },

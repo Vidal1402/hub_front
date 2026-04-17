@@ -15,6 +15,10 @@ import {
   type MarketingMetricsValues,
 } from "@/components/marketing/MarketingMetricsBoard";
 import { apiRequest } from "@/lib/api";
+import {
+  buildClientReportSummaryForApi,
+  normalizeClientReportFromApi,
+} from "@/lib/clientReportsApi";
 import { useApiData } from "@/hooks/useApiData";
 import { useToast } from "@/hooks/use-toast";
 
@@ -45,6 +49,7 @@ type ClientReportRow = {
   client_id: ApiId;
   title: string;
   description?: string | null;
+  summary?: string | null;
   url: string;
   period_label?: string | null;
   client_name?: string;
@@ -129,8 +134,11 @@ export function RelatoriosAdminPage() {
     queryKey: REPORTS_QUERY_KEY,
     queryFn: async (): Promise<ClientReportRow[]> => {
       try {
-        const res = await apiRequest<{ data?: ClientReportRow[] }>("/api/client-reports");
-        return Array.isArray(res.data) ? res.data : [];
+        const res = await apiRequest<{ data?: unknown[] }>("/api/client-reports");
+        const list = Array.isArray(res.data) ? res.data : [];
+        return list
+          .filter((row): row is Record<string, unknown> => row != null && typeof row === "object" && !Array.isArray(row))
+          .map((row) => normalizeClientReportFromApi(row) as ClientReportRow);
       } catch {
         return [];
       }
@@ -252,9 +260,8 @@ export function RelatoriosAdminPage() {
         body: {
           client_id: clientIdForPayload(form.client_id),
           title: form.title.trim(),
-          description: form.description.trim() || null,
           url: form.url.trim(),
-          period_label: form.period_label.trim() || null,
+          summary: buildClientReportSummaryForApi(form.period_label, form.description),
         },
       });
       toast({
@@ -296,9 +303,8 @@ export function RelatoriosAdminPage() {
         method: "PATCH",
         body: {
           title: form.title.trim(),
-          description: form.description.trim() || null,
           url: form.url.trim(),
-          period_label: form.period_label.trim() || null,
+          summary: buildClientReportSummaryForApi(form.period_label, form.description),
         },
       });
       toast({ title: "Relatório atualizado" });
@@ -483,7 +489,9 @@ export function RelatoriosAdminPage() {
                   )}
                   {r.period_label ? ` · ${r.period_label}` : ""}
                 </p>
-                {r.description ? <p className="text-xs leading-relaxed text-text-3">{r.description}</p> : null}
+                {r.description || r.summary ? (
+                  <p className="text-xs leading-relaxed text-text-3">{r.description || r.summary}</p>
+                ) : null}
                 <a
                   href={r.url}
                   target="_blank"

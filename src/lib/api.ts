@@ -17,6 +17,28 @@ export type ApiSession = {
 const TOKEN_KEY = "united_flow_token";
 const USER_KEY = "united_flow_user";
 
+function normalizeStoredToken(raw: string | null): string | null {
+  if (!raw) return null;
+  let token = String(raw).trim();
+  if (!token || token === "null" || token === "undefined") return null;
+  if ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))) {
+    token = token.slice(1, -1).trim();
+  }
+  if (token.startsWith("Bearer ")) {
+    token = token.slice(7).trim();
+  }
+  return token || null;
+}
+
+/** Token pode estar só no localStorage da origem certa (porta) ou no sessionStorage. */
+function readStoredToken(): string | null {
+  const fromStorage = (s: Storage): string | null => {
+    const t = normalizeStoredToken(s.getItem(TOKEN_KEY));
+    return t || null;
+  };
+  return fromStorage(localStorage) ?? fromStorage(sessionStorage);
+}
+
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
     const parts = token.split(".");
@@ -59,13 +81,17 @@ export function getApiBaseUrl(): string {
   if (import.meta.env.DEV) {
     return "";
   }
-  return (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, "") || PROD_FALLBACK_API;
+  const configured = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, "") || "";
+  if (/^https?:\/\/localhost:8082$/i.test(configured)) {
+    return PROD_FALLBACK_API;
+  }
+  return configured || PROD_FALLBACK_API;
 }
 
 export function getStoredSession(): ApiSession | null {
-  const token = localStorage.getItem(TOKEN_KEY);
+  const token = readStoredToken();
   const userRaw = localStorage.getItem(USER_KEY);
-  if (!token || token === "null" || token === "undefined") return null;
+  if (!token) return null;
 
   // Se o user não existir, ainda mantenha a sessão usando o payload do JWT.
   if (!userRaw) {
@@ -133,7 +159,7 @@ function errorMessageFromApiBody(json: Record<string, unknown>, status: number):
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const token = options.token ?? getStoredSession()?.token ?? null;
+  const token = options.token ?? getStoredSession()?.token ?? readStoredToken() ?? null;
   const url = `${getApiBaseUrl()}${path}`;
 
   let response: Response;

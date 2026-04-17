@@ -100,8 +100,6 @@ export function parseIntInput(s: string): number {
 
 function isMetaChannelEmpty(v: MarketingMetricsValues): boolean {
   return (
-    !v.meta_account_id.trim() &&
-    !v.meta_account_name.trim() &&
     parseSpendInput(v.meta_spend) === 0 &&
     parseIntInput(v.meta_leads) === 0 &&
     parseIntInput(v.meta_conversions) === 0
@@ -110,8 +108,6 @@ function isMetaChannelEmpty(v: MarketingMetricsValues): boolean {
 
 function isGoogleChannelEmpty(v: MarketingMetricsValues): boolean {
   return (
-    !v.google_account_id.trim() &&
-    !v.google_account_name.trim() &&
     parseSpendInput(v.google_spend) === 0 &&
     parseIntInput(v.google_leads) === 0 &&
     parseIntInput(v.google_conversions) === 0
@@ -143,13 +139,13 @@ export function metricsValuesToPayload(
   return {
     client_id: clientId,
     period_label: periodLabel.trim(),
-    meta_account_id: values.meta_account_id.trim() || null,
-    meta_account_name: values.meta_account_name.trim() || null,
+    meta_account_id: null,
+    meta_account_name: null,
     meta_spend: parseSpendInput(values.meta_spend),
     meta_leads: parseIntInput(values.meta_leads),
     meta_conversions: parseIntInput(values.meta_conversions),
-    google_account_id: values.google_account_id.trim() || null,
-    google_account_name: values.google_account_name.trim() || null,
+    google_account_id: null,
+    google_account_name: null,
     google_spend: parseSpendInput(values.google_spend),
     google_leads: parseIntInput(values.google_leads),
     google_conversions: parseIntInput(values.google_conversions),
@@ -233,20 +229,6 @@ export function MarketingMetricsBoard({ mode, values, onChange, className, hideE
         <p className="mb-3 text-sm font-bold text-text-1">Meta Ads</p>
         <div className="space-y-3">
           <Field
-            label="ID da conta"
-            readOnly={readOnly}
-            value={values.meta_account_id}
-            placeholder="Ex: 123456789"
-            onChange={(v) => set({ meta_account_id: v })}
-          />
-          <Field
-            label="Nome da conta"
-            readOnly={readOnly}
-            value={values.meta_account_name}
-            placeholder="Ex: Conta principal"
-            onChange={(v) => set({ meta_account_name: v })}
-          />
-          <Field
             label="Gasto (R$)"
             readOnly={readOnly}
             value={values.meta_spend}
@@ -269,20 +251,6 @@ export function MarketingMetricsBoard({ mode, values, onChange, className, hideE
       <div className={cardClass}>
         <p className="mb-3 text-sm font-bold text-text-1">Google Ads</p>
         <div className="space-y-3">
-          <Field
-            label="ID da conta"
-            readOnly={readOnly}
-            value={values.google_account_id}
-            placeholder="Ex: 123456789"
-            onChange={(v) => set({ google_account_id: v })}
-          />
-          <Field
-            label="Nome da conta"
-            readOnly={readOnly}
-            value={values.google_account_name}
-            placeholder="Ex: Conta Principal"
-            onChange={(v) => set({ google_account_name: v })}
-          />
           <Field
             label="Gasto (R$)"
             readOnly={readOnly}
