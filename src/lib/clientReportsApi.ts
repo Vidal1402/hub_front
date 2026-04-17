@@ -65,13 +65,21 @@ export function normalizeClientReportFromApi(r: Record<string, unknown>): Normal
   const attachments: ReportAttachmentMeta[] = Array.isArray(attachmentsRaw)
     ? attachmentsRaw
         .filter((a): a is Record<string, unknown> => a != null && typeof a === "object" && !Array.isArray(a))
-        .map((a) => ({
-          attachment_id: a.attachment_id != null ? Number(a.attachment_id) : null,
-          filename: String(a.filename ?? "arquivo"),
-          mime_type: String(a.mime_type ?? "application/octet-stream"),
-          size: Number(a.size ?? 0) || 0,
-          data_base64: typeof a.data_base64 === "string" ? a.data_base64 : undefined,
-        }))
+        .map((a) => {
+          const b64 =
+            typeof a.data_base64 === "string"
+              ? a.data_base64
+              : typeof a.data === "string"
+                ? a.data
+                : undefined;
+          return {
+            attachment_id: a.attachment_id != null ? Number(a.attachment_id) : null,
+            filename: String(a.filename ?? "arquivo"),
+            mime_type: String(a.mime_type ?? "application/octet-stream"),
+            size: Number(a.size ?? 0) || 0,
+            data_base64: b64,
+          };
+        })
     : [];
 
   return {
