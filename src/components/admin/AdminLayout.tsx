@@ -37,7 +37,7 @@ export function AdminLayout() {
 
   useEffect(() => {
     if (authLoading || !session?.token) return;
-    const paths = ["/api/clients", "/api/tasks", "/api/invoices"] as const;
+    const paths = ["/api/clients", "/api/tasks", "/api/invoices", "/api/plans"] as const;
     for (const path of paths) {
       void prefetchApiPath(queryClient, path);
     }

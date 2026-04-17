@@ -58,6 +58,7 @@ export function FinanceiroAdminPage() {
   };
 
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [linkingId, setLinkingId] = useState<number | null>(null);
 
   const patchInvoiceStatus = async (id: number, status: string) => {
     setUpdatingId(id);
@@ -76,6 +77,28 @@ export function FinanceiroAdminPage() {
       });
     } finally {
       setUpdatingId(null);
+    }
+  };
+
+  const patchInvoiceClient = async (invoiceId: number, clientIdStr: string) => {
+    const clientId = Number(clientIdStr);
+    if (!clientIdStr || !Number.isFinite(clientId) || clientId <= 0) return;
+    setLinkingId(invoiceId);
+    try {
+      await apiRequest(`/api/invoices/${invoiceId}`, {
+        method: "PATCH",
+        body: { client_id: clientId },
+      });
+      toast({ title: "Cliente vinculado", description: "A fatura passa a aparecer no portal desse cliente." });
+      await refreshInvoices();
+    } catch (err) {
+      toast({
+        title: "Erro ao vincular",
+        description: err instanceof Error ? err.message : "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setLinkingId(null);
     }
   };
 
@@ -132,7 +155,9 @@ export function FinanceiroAdminPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-text-1">Financeiro</h1>
-          <p className="text-sm text-text-3">Cada cobrança deve ser vinculada a um cliente para aparecer no portal dele (Relatórios e Financeiro).</p>
+          <p className="text-sm text-text-3">
+            Cada cobrança precisa de um cliente vinculado para o titular ver valor, vencimento e status no portal (e para você cobrar com rastreio). Em faturas marcadas como “Sem cliente”, escolha o cliente na lista ao lado.
+          </p>
         </div>
         <Button size="sm" className="gap-1.5 text-xs" onClick={() => setOpenCreate(true)}>
           <Plus size={14} /> Nova Cobrança
@@ -170,18 +195,42 @@ export function FinanceiroAdminPage() {
                   {new Date(inv.due_date).toLocaleDateString("pt-BR")}
                 </p>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="text-[10px] font-medium uppercase tracking-wide text-text-3">Status</span>
-                <select
-                  className="h-9 min-w-[140px] rounded-md border border-input bg-background px-2 text-xs"
-                  value={inv.status}
-                  disabled={updatingId === inv.id}
-                  onChange={(e) => void patchInvoiceStatus(inv.id, e.target.value)}
-                >
-                  <option value="Pendente">Pendente</option>
-                  <option value="Pago">Pago</option>
-                  <option value="Vencido">Vencido</option>
-                </select>
+              <div className="flex shrink-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+                {inv.client_id == null && clients.length > 0 ? (
+                  <div className="flex flex-col gap-1 sm:min-w-[200px]">
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-text-3">Vincular a</span>
+                    <select
+                      className="h-9 rounded-md border border-input bg-background px-2 text-xs"
+                      value=""
+                      disabled={linkingId === inv.id || clientsLoading}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        e.target.value = "";
+                        if (v) void patchInvoiceClient(inv.id, v);
+                      }}
+                    >
+                      <option value="">Escolher cliente…</option>
+                      {clients.map((c) => (
+                        <option key={c.id} value={String(c.id)}>
+                          {c.empresa} — {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-text-3">Status</span>
+                  <select
+                    className="h-9 min-w-[140px] rounded-md border border-input bg-background px-2 text-xs"
+                    value={inv.status}
+                    disabled={updatingId === inv.id}
+                    onChange={(e) => void patchInvoiceStatus(inv.id, e.target.value)}
+                  >
+                    <option value="Pendente">Pendente</option>
+                    <option value="Pago">Pago</option>
+                    <option value="Vencido">Vencido</option>
+                  </select>
+                </div>
               </div>
             </div>
           ))}

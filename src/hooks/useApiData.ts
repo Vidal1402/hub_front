@@ -58,7 +58,7 @@ export function prefetchApiPath(queryClient: QueryClient, path: string) {
 }
 
 /** Chaves comuns onde APIs aninham a lista real dentro de `data`. */
-const NESTED_LIST_KEYS = ["clients", "items", "rows", "results", "records", "content", "list", "data"] as const;
+const NESTED_LIST_KEYS = ["clients", "plans", "items", "rows", "results", "records", "content", "list", "data"] as const;
 
 /**
  * Alguns proxies/backends devolvem:
