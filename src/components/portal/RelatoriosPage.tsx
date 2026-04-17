@@ -1,10 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { BarChart3, ExternalLink, Info, Kanban, Wallet } from "lucide-react";
-import {
-  MarketingMetricsBoard,
-  metricsFromApiRow,
-  type MarketingMetricsApiRow,
-} from "@/components/marketing/MarketingMetricsBoard";
 import { normalizeClientReportFromApi, type ReportAttachmentMeta } from "@/lib/clientReportsApi";
 import { apiRequest } from "@/lib/api";
 import { useApiData } from "@/hooks/useApiData";
@@ -34,13 +29,6 @@ type PublishedReport = {
   attachments?: ReportAttachmentMeta[];
 };
 
-type MarketingMetricsListRow = MarketingMetricsApiRow & {
-  id?: number;
-  client_id?: number;
-  period_label?: string;
-  updated_at?: string;
-};
-
 function base64ToBlob(b64: string, mime: string): Blob {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -56,39 +44,6 @@ function downloadAttachmentFromBase64(name: string, mime: string, b64: string) {
   a.download = name;
   a.click();
   URL.revokeObjectURL(url);
-}
-
-function normalizeMetricsRow(raw: unknown): MarketingMetricsListRow | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const row = raw as Record<string, unknown>;
-  const payload =
-    row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)
-      ? (row.payload as Record<string, unknown>)
-      : null;
-
-  const src = payload ? { ...payload, ...row } : row;
-  return {
-    id: Number(src.id ?? 0) || undefined,
-    client_id: Number(src.client_id ?? 0) || undefined,
-    period_label: String(src.period_label ?? src.period ?? "").trim() || undefined,
-    updated_at: typeof src.updated_at === "string" ? src.updated_at : undefined,
-    meta_account_id: (src.meta_account_id as string | null | undefined) ?? null,
-    meta_account_name: (src.meta_account_name as string | null | undefined) ?? null,
-    meta_spend: Number(src.meta_spend ?? 0),
-    meta_leads: Number(src.meta_leads ?? 0),
-    meta_conversions: Number(src.meta_conversions ?? 0),
-    google_account_id: (src.google_account_id as string | null | undefined) ?? null,
-    google_account_name: (src.google_account_name as string | null | undefined) ?? null,
-    google_spend: Number(src.google_spend ?? 0),
-    google_leads: Number(src.google_leads ?? 0),
-    google_conversions: Number(src.google_conversions ?? 0),
-    organic_spend: Number(src.organic_spend ?? 0),
-    organic_leads: Number(src.organic_leads ?? 0),
-    organic_conversions: Number(src.organic_conversions ?? 0),
-    outros_spend: Number(src.outros_spend ?? 0),
-    outros_leads: Number(src.outros_leads ?? 0),
-    outros_conversions: Number(src.outros_conversions ?? 0),
-  };
 }
 
 function money(n: number) {
@@ -121,9 +76,7 @@ export function RelatoriosPage() {
   const tasks = useApiData<Task[]>("/api/tasks", []);
   const clientMe = useApiData<ClientMe>("/api/clients/me", null);
   const published = useApiData<PublishedReport[]>("/api/client-reports", []);
-  const marketingMetrics = useApiData<unknown[]>("/api/marketing-metrics", []);
 
-  const [metricsIndex, setMetricsIndex] = useState(0);
   const [reportDetailById, setReportDetailById] = useState<Record<number, PublishedReport>>({});
   const [loadingReportId, setLoadingReportId] = useState<number | null>(null);
 
@@ -144,14 +97,6 @@ export function RelatoriosPage() {
   const linkedClient = clientMe.data;
   const showLinkHint = isCliente && !clientMe.loading && linkedClient == null && !clientMe.error;
 
-  const metricsRows = useMemo(() => {
-    const rows = Array.isArray(marketingMetrics.data) ? marketingMetrics.data : [];
-    const normalized = rows
-      .map(normalizeMetricsRow)
-      .filter((row): row is MarketingMetricsListRow => row !== null);
-    if (!linkedClient?.id) return normalized;
-    return normalized.filter((row) => row.client_id == null || row.client_id === linkedClient.id);
-  }, [marketingMetrics.data, linkedClient?.id]);
   const publishedNormalized = useMemo(() => {
     const list = Array.isArray(published.data) ? published.data : [];
     return list
@@ -177,14 +122,6 @@ export function RelatoriosPage() {
     if (!linkedClient?.id) return publishedNormalized;
     return publishedNormalized.filter((r) => r.client_id == null || r.client_id === linkedClient.id);
   }, [publishedNormalized, linkedClient?.id]);
-  useEffect(() => {
-    if (metricsRows.length === 0) return;
-    setMetricsIndex((i) => Math.min(i, metricsRows.length - 1));
-  }, [metricsRows.length]);
-
-  const safeMetricsIndex = metricsRows.length > 0 ? Math.min(metricsIndex, metricsRows.length - 1) : 0;
-  const selectedMetricsRow = metricsRows.length > 0 ? metricsRows[safeMetricsIndex] : null;
-  const metricsReadValues = useMemo(() => metricsFromApiRow(selectedMetricsRow), [selectedMetricsRow]);
 
   const loadReportDetail = async (id: number) => {
     if (reportDetailById[id]) return;
@@ -249,50 +186,6 @@ export function RelatoriosPage() {
           Conta vinculada a <span className="font-medium text-text-1">{linkedClient.empresa}</span> ({linkedClient.name}).
         </p>
       ) : null}
-
-      <PortalCard>
-        <div className="p-5">
-          <p className="mb-3 text-sm font-bold text-text-1">Performance (Meta, Google, orgânico e outros)</p>
-          <p className="mb-4 text-xs leading-relaxed text-text-3">
-            Métricas preenchidas pelo administrador para o seu cadastro. Quando houver mais de um período, escolha abaixo.
-          </p>
-          {marketingMetrics.loading && <p className="text-xs text-text-3">Carregando métricas...</p>}
-          {marketingMetrics.error && (
-            <p className="mb-3 text-xs text-tag-amber">Não foi possível carregar as métricas de marketing. {marketingMetrics.error}</p>
-          )}
-          {!marketingMetrics.loading && !marketingMetrics.error && metricsRows.length === 0 && (
-            <p className="mb-4 text-xs leading-relaxed text-text-3">
-              Ainda não há métricas publicadas para sua conta. Quando o time salvar um relatório em <strong>Admin → Relatórios</strong>, o quadro aparecerá
-              aqui.
-            </p>
-          )}
-          {metricsRows.length > 0 ? (
-            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="space-y-1">
-                <label className="text-[11px] font-medium text-text-3" htmlFor="metrics-period">
-                  Período
-                </label>
-                <select
-                  id="metrics-period"
-                  className="flex h-9 max-w-full rounded-md border border-input bg-background px-3 text-sm sm:max-w-xs"
-                  value={String(safeMetricsIndex)}
-                  onChange={(e) => setMetricsIndex(Number(e.target.value))}
-                >
-                  {metricsRows.map((row, i) => (
-                    <option key={row.id ?? `${row.period_label}-${i}`} value={String(i)}>
-                      {row.period_label || `Período ${i + 1}`}
-                      {row.updated_at ? ` · atualizado ${new Date(row.updated_at).toLocaleDateString("pt-BR")}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          ) : null}
-          {metricsRows.length > 0 ? (
-            <MarketingMetricsBoard mode="read" values={metricsReadValues} hideEmptyChannels />
-          ) : null}
-        </div>
-      </PortalCard>
 
       <PortalCard>
         <div className="p-5">
@@ -485,8 +378,7 @@ export function RelatoriosPage() {
                 Em <strong>Produção</strong>, o cliente abre solicitações; a equipe administra o quadro no painel administrativo.
               </li>
               <li>
-                Em <strong>Relatórios</strong> (admin), use <strong>Métricas de marketing</strong> e/ou <strong>Enviar materiais</strong> para anexar arquivos ao
-                cliente — tudo aparece nesta aba no portal.
+                Em <strong>Relatórios</strong> (admin), use <strong>Enviar materiais</strong> para anexar arquivos ao cliente — aparecem nesta aba no portal.
               </li>
             </ol>
           </div>

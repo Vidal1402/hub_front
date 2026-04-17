@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,14 +6,6 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ExternalLink, FileUp, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
-import {
-  emptyMarketingMetricsValues,
-  MarketingMetricsBoard,
-  metricsFromApiRow,
-  metricsValuesToPayload,
-  type MarketingMetricsApiRow,
-  type MarketingMetricsValues,
-} from "@/components/marketing/MarketingMetricsBoard";
 import { apiRequest } from "@/lib/api";
 import {
   buildClientReportSummaryForApi,
@@ -25,18 +17,10 @@ import { useToast } from "@/hooks/use-toast";
 
 /** Lista de relatórios publicados (bloco inferior da página). O select "Selecione" usa só GET /api/clients. */
 const REPORTS_QUERY_KEY = ["api", "/api/client-reports"] as const;
-const METRICS_QUERY_KEY = ["api", "/api/marketing-metrics"] as const;
 
 const REPORTS_STALE_MS = 30 * 60_000;
 const REPORTS_GC_MS = 24 * 60 * 60_000;
 
-function defaultPeriodLabel(): string {
-  const d = new Date();
-  const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-  return `${months[d.getMonth()]}/${d.getFullYear()}`;
-}
-
-/** Para métricas, backend atual espera client_id numérico. */
 function parseNumericClientId(raw: string): number | null {
   const n = Number.parseInt(String(raw).trim(), 10);
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -185,115 +169,6 @@ export function RelatoriosAdminPage() {
   const reportsList = reportsQuery.data ?? [];
   const reportsLoading = reportsQuery.isPending;
 
-  const [metricsClientId, setMetricsClientId] = useState("");
-  const [metricsManualClientId, setMetricsManualClientId] = useState("");
-  const [metricsPeriod, setMetricsPeriod] = useState(() => defaultPeriodLabel());
-  const [metricsForm, setMetricsForm] = useState<MarketingMetricsValues>(() => emptyMarketingMetricsValues());
-  const [metricsLoading, setMetricsLoading] = useState(false);
-  const [metricsSaving, setMetricsSaving] = useState(false);
-
-  const loadMarketingMetrics = useCallback(
-    async (opts?: { silent?: boolean }) => {
-      const clientId =
-        parseNumericClientId(metricsManualClientId) ?? parseNumericClientId(metricsClientId);
-      const period = metricsPeriod.trim();
-      if (clientId === null) {
-        if (!opts?.silent) {
-          toast({
-            title: metricsClientId || metricsManualClientId ? "ID do cliente inválido para métricas" : "Selecione um cliente",
-            description: metricsClientId || metricsManualClientId ? "Esta API de métricas aceita client_id numérico." : undefined,
-            variant: "destructive",
-          });
-        }
-        return;
-      }
-      if (period === "") {
-        if (!opts?.silent) {
-          toast({ title: "Informe o período", description: "Ex.: Abr/2026", variant: "destructive" });
-        }
-        return;
-      }
-      setMetricsLoading(true);
-      try {
-        const q = new URLSearchParams({
-          client_id: String(clientId),
-          period,
-        });
-        const res = await apiRequest<{ data: MarketingMetricsApiRow | null }>(`/api/marketing-metrics?${q.toString()}`);
-        setMetricsForm(metricsFromApiRow(res.data));
-        if (!opts?.silent) {
-          toast({
-            title: res.data ? "Métricas carregadas" : "Novo período",
-            description: res.data ? undefined : "Preencha e salve para criar o registro.",
-          });
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "";
-        toast({
-          title: "Erro ao carregar métricas",
-          description: /Rota n[oã]o encontrada|HTTP 404/i.test(msg)
-            ? "Endpoint /api/marketing-metrics não encontrado no backend ativo."
-            : msg || "Tente novamente.",
-          variant: "destructive",
-        });
-      } finally {
-        setMetricsLoading(false);
-      }
-    },
-    [metricsClientId, metricsManualClientId, metricsPeriod, toast],
-  );
-
-  useEffect(() => {
-    const clientId =
-      parseNumericClientId(metricsManualClientId) ?? parseNumericClientId(metricsClientId);
-    const period = metricsPeriod.trim();
-    if (clientId === null || period === "") return;
-    const t = window.setTimeout(() => {
-      void loadMarketingMetrics({ silent: true });
-    }, 450);
-    return () => window.clearTimeout(t);
-  }, [metricsClientId, metricsManualClientId, metricsPeriod, loadMarketingMetrics]);
-
-  const saveMarketingMetrics = async (e: FormEvent) => {
-    e.preventDefault();
-    const clientId =
-      parseNumericClientId(metricsManualClientId) ??
-      parseNumericClientId(metricsClientId);
-    const period = metricsPeriod.trim();
-    if (clientId === null) {
-      toast({
-        title: metricsClientId || metricsManualClientId ? "ID do cliente inválido para métricas" : "Selecione um cliente",
-        description: metricsClientId || metricsManualClientId ? "Esta API de métricas aceita client_id numérico." : undefined,
-        variant: "destructive",
-      });
-      return;
-    }
-    if (period === "") {
-      toast({ title: "Informe o período", description: "Ex.: Abr/2026", variant: "destructive" });
-      return;
-    }
-    setMetricsSaving(true);
-    try {
-      await apiRequest("/api/marketing-metrics", {
-        method: "POST",
-        body: metricsValuesToPayload(clientId, period, metricsForm),
-      });
-      toast({ title: "Métricas salvas", description: "O cliente verá na aba Relatórios do portal." });
-      await queryClient.invalidateQueries({ queryKey: [...METRICS_QUERY_KEY] });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "";
-      toast({
-        title: "Erro ao salvar",
-        description: /Rota n[oã]o encontrada|HTTP 404/i.test(msg)
-          ? "Endpoint /api/marketing-metrics não encontrado no backend ativo."
-          : msg || "Tente novamente.",
-        variant: "destructive",
-      });
-    } finally {
-      setMetricsSaving(false);
-    }
-  };
-
   const [openCreate, setOpenCreate] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<NormalizedClientReport | null>(null);
@@ -427,92 +302,9 @@ export function RelatoriosAdminPage() {
       <div>
         <h1 className="text-xl font-bold text-text-1">Relatórios</h1>
         <p className="text-sm text-text-3">
-          Métricas de marketing por período e envio de arquivos (PDF, imagens, etc.) por cliente. No portal, o cliente abre os materiais na mesma aba.
+          Envio de arquivos (PDF, imagens, etc.) por cliente. No portal, o cliente abre os materiais na mesma aba.
         </p>
       </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Métricas de marketing por cliente</CardTitle>
-          <p className="mt-1 text-xs text-text-3">
-            Os quatro canais são opcionais: preencha só o que fizer sentido neste período (o restante fica zerado). Não é preciso usar &quot;Carregar&quot;
-            antes de salvar — esse botão só traz o que já estava salvo naquele período. No portal, o cliente vê só os canais com dados. Período ex.: Abr/2026.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <form
-            className="space-y-4"
-            onSubmit={saveMarketingMetrics}
-            noValidate
-          >
-            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-              <div className="min-w-[200px] flex-1 space-y-1">
-                <Label className="text-xs">Cliente</Label>
-                {clients.error ? (
-                  <p className="text-[11px] text-tag-amber">Não foi possível carregar a lista de clientes. Atualize a página ou verifique o login.</p>
-                ) : null}
-                {clients.loading && clientRows.length === 0 ? (
-                  <p className="text-[11px] text-text-3">Carregando clientes…</p>
-                ) : null}
-                <select
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  name="metrics_client_id"
-                  autoComplete="off"
-                  value={metricsClientId}
-                  onChange={(e) => setMetricsClientId(e.target.value)}
-                  disabled={clients.loading && clientRows.length === 0}
-                >
-                  <option value="">Selecione</option>
-                  {clientRows.map((c) => (
-                    <option key={c.id} value={c.numericId != null ? String(c.numericId) : ""} disabled={c.numericId == null}>
-                      {c.empresa} — {c.name}
-                      {c.numericId == null ? " (sem ID numérico)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="w-full min-w-[140px] sm:w-40 space-y-1">
-                <Label className="text-xs">ID numérico (manual)</Label>
-                <Input
-                  name="metrics_manual_client_id"
-                  autoComplete="off"
-                  value={metricsManualClientId}
-                  onChange={(e) => setMetricsManualClientId(e.target.value)}
-                  placeholder="Ex.: 12"
-                />
-              </div>
-              <div className="w-full min-w-[140px] sm:w-40 space-y-1">
-                <Label className="text-xs">Período</Label>
-                <Input
-                  name="metrics_period"
-                  autoComplete="off"
-                  value={metricsPeriod}
-                  onChange={(e) => setMetricsPeriod(e.target.value)}
-                  placeholder={defaultPeriodLabel()}
-                />
-              </div>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={metricsLoading}
-                className="w-full sm:w-auto"
-                onClick={() => void loadMarketingMetrics()}
-              >
-                {metricsLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Carregar
-              </Button>
-            </div>
-
-            <MarketingMetricsBoard mode="edit" values={metricsForm} onChange={setMetricsForm} />
-            <div className="flex justify-end">
-              <Button type="submit" disabled={metricsSaving}>
-                {metricsSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Salvar métricas
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
