@@ -25,7 +25,7 @@ const ADMIN_NAV: {
   { id: "financeiro", label: "Financeiro", icon: "CreditCard" },
   { id: "produtos", label: "Produtos / Planos", icon: "Package" },
   { id: "comercial", label: "Comercial", icon: "TrendingUp" },
-  { id: "alertas", label: "Alertas", icon: "AlertTriangle", comingSoon: true },
+  { id: "alertas", label: "Alertas", icon: "AlertTriangle" },
   { id: "relatorios", label: "Relatórios", icon: "FileText" },
   { id: "config", label: "Configurações", icon: "Settings" },
 ];

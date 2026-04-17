@@ -11,6 +11,7 @@ import { ProdutosPlanosPage } from "./pages/ProdutosPlanosPage";
 import { ComercialPage } from "./pages/ComercialPage";
 import { RelatoriosAdminPage } from "./pages/RelatoriosAdminPage";
 import { ConfigAdminPage } from "./pages/ConfigAdminPage";
+import { AlertasPage } from "./pages/AlertasPage";
 import { useAuth } from "@/hooks/useAuth";
 import { prefetchApiPath } from "@/hooks/useApiData";
 
@@ -64,7 +65,7 @@ export function AdminLayout() {
           {page === "financeiro" && <FinanceiroAdminPage />}
           {page === "produtos" && <ProdutosPlanosPage />}
           {page === "comercial" && <ComercialPage />}
-          {page === "alertas" && <SecaoEmBreveAdmin titulo="Alertas" />}
+          {page === "alertas" && <AlertasPage />}
           {page === "relatorios" && <RelatoriosAdminPage />}
           {page === "config" && <ConfigAdminPage />}
         </div>
