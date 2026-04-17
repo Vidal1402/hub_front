@@ -150,7 +150,7 @@ export function ClientesPage() {
 
     setAccessLoading(true);
     try {
-      const userRes = await apiRequest<{ user: { id: number } }>("/api/admin/users", {
+      await apiRequest("/api/admin/users", {
         method: "POST",
         body: {
           name: accessTarget.name,
@@ -160,13 +160,6 @@ export function ClientesPage() {
           reset_if_exists: true,
         },
       });
-
-      if (userRes.user?.id != null) {
-        await apiRequest(`/api/clients/${accessTarget.id}`, {
-          method: "PATCH",
-          body: { user_id: userRes.user.id },
-        });
-      }
 
       toast({
         title: "Acesso liberado",
@@ -265,7 +258,7 @@ export function ClientesPage() {
 
     setSaving(true);
     try {
-      const created = await apiRequest<{ id: number }>("/api/clients", {
+      await apiRequest("/api/clients", {
         method: "POST",
         body: {
           ...newClient,
@@ -274,7 +267,7 @@ export function ClientesPage() {
       });
 
       if (createAccess) {
-        const userRes = await apiRequest<{ user: { id: number } }>("/api/admin/users", {
+        await apiRequest("/api/admin/users", {
           method: "POST",
           body: {
             name: newClient.name,
@@ -284,12 +277,6 @@ export function ClientesPage() {
             reset_if_exists: true,
           },
         });
-        if (userRes.user?.id != null && created.id != null) {
-          await apiRequest(`/api/clients/${created.id}`, {
-            method: "PATCH",
-            body: { user_id: userRes.user.id },
-          });
-        }
       }
 
       toast({
