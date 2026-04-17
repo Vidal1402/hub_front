@@ -1,4 +1,5 @@
 import { Bell, ChevronDown, Download, Menu, Plus } from "lucide-react";
+import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -8,6 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useApiData } from "@/hooks/useApiData";
 
 export type AdminNavPage =
   | "visao-geral"
@@ -26,7 +28,34 @@ interface Props {
   onNavigate: (page: AdminNavPage) => void;
 }
 
+function formatCurrencyCompactBrl(value: number): string {
+  const n = Number.isFinite(value) ? value : 0;
+  if (n >= 1_000_000) return `R$ ${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `R$ ${(n / 1000).toFixed(1)}k`;
+  if (n >= 1000) return `R$ ${(n / 1000).toFixed(1)}k`;
+  return `R$ ${n.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`;
+}
+
 export function AdminTopbar({ onMenuClick, onNavigate }: Props) {
+  const clients = useApiData<Array<Record<string, unknown>>>("/api/clients", []);
+  const invoices = useApiData<Array<{ amount?: number; status?: string }>>("/api/invoices", []);
+
+  const { mrrLabel, clientesLabel, aReceberLabel } = useMemo(() => {
+    const list = Array.isArray(clients.data) ? clients.data : [];
+    const mrr = list.reduce((acc, row) => acc + Number(row.valor ?? 0), 0);
+    const clientes = list.length;
+
+    const inv = Array.isArray(invoices.data) ? invoices.data : [];
+    const pending = inv.filter((i) => !/^(pago|paid)$/i.test(String(i.status ?? "").trim()));
+    const aReceber = pending.reduce((acc, i) => acc + Number(i.amount ?? 0), 0);
+
+    return {
+      mrrLabel: formatCurrencyCompactBrl(mrr),
+      clientesLabel: String(clientes),
+      aReceberLabel: formatCurrencyCompactBrl(aReceber),
+    };
+  }, [clients.data, invoices.data]);
+
   return (
     <div className="sticky top-0 z-10 bg-card/80 backdrop-blur-sm border-b border-border px-4 md:px-6 py-3 flex items-center justify-between gap-3">
       <div className="flex items-center gap-3">
@@ -38,11 +67,11 @@ export function AdminTopbar({ onMenuClick, onNavigate }: Props) {
           <Menu size={18} />
         </button>
         <div className="hidden sm:flex items-center gap-4">
-          <Stat label="MRR" value="R$ 87.4k" />
+          <Stat label="MRR" value={clients.loading && !clients.data.length ? "…" : mrrLabel} hint="Soma dos planos (valor) dos clientes" />
           <div className="w-px h-6 bg-border" />
-          <Stat label="Clientes" value="142" />
+          <Stat label="Clientes" value={clients.loading && !clients.data.length ? "…" : clientesLabel} hint="Cadastros ativos na base" />
           <div className="w-px h-6 bg-border" />
-          <Stat label="A Receber" value="R$ 32.8k" />
+          <Stat label="A Receber" value={invoices.loading && !invoices.data.length ? "…" : aReceberLabel} hint="Faturas não pagas (pendentes)" />
         </div>
       </div>
       <div className="flex items-center gap-2">
@@ -87,11 +116,11 @@ export function AdminTopbar({ onMenuClick, onNavigate }: Props) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div>
+    <div title={hint}>
       <p className="text-[10px] text-text-3 uppercase tracking-wider font-medium">{label}</p>
-      <p className="text-sm font-bold text-text-1">{value}</p>
+      <p className="text-sm font-bold text-text-1 tabular-nums">{value}</p>
     </div>
   );
 }

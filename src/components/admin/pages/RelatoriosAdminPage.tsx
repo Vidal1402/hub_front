@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -150,7 +150,6 @@ const emptyForm = {
   client_id: "",
   title: "",
   description: "",
-  url: "",
   period_label: "",
 };
 
@@ -165,8 +164,6 @@ export function RelatoriosAdminPage() {
     void queryClient.invalidateQueries({ queryKey: ["api", "/api/clients"] });
   }, [queryClient]);
 
-  const tasks = useApiData<{ id: number; status: string }[]>("/api/tasks", []);
-  const invoices = useApiData<{ id: number; amount: number }[]>("/api/invoices", []);
   const reportsQuery = useQuery({
     queryKey: REPORTS_QUERY_KEY,
     queryFn: async (): Promise<NormalizedClientReport[]> => {
@@ -188,8 +185,6 @@ export function RelatoriosAdminPage() {
   const reportsList = reportsQuery.data ?? [];
   const reportsLoading = reportsQuery.isPending;
 
-  const totalFaturamento = invoices.data.reduce((acc, item) => acc + Number(item.amount || 0), 0);
-
   const [metricsClientId, setMetricsClientId] = useState("");
   const [metricsManualClientId, setMetricsManualClientId] = useState("");
   const [metricsPeriod, setMetricsPeriod] = useState(() => defaultPeriodLabel());
@@ -197,45 +192,67 @@ export function RelatoriosAdminPage() {
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsSaving, setMetricsSaving] = useState(false);
 
-  const loadMarketingMetrics = async () => {
+  const loadMarketingMetrics = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const clientId =
+        parseNumericClientId(metricsManualClientId) ?? parseNumericClientId(metricsClientId);
+      const period = metricsPeriod.trim();
+      if (clientId === null) {
+        if (!opts?.silent) {
+          toast({
+            title: metricsClientId || metricsManualClientId ? "ID do cliente inválido para métricas" : "Selecione um cliente",
+            description: metricsClientId || metricsManualClientId ? "Esta API de métricas aceita client_id numérico." : undefined,
+            variant: "destructive",
+          });
+        }
+        return;
+      }
+      if (period === "") {
+        if (!opts?.silent) {
+          toast({ title: "Informe o período", description: "Ex.: Abr/2026", variant: "destructive" });
+        }
+        return;
+      }
+      setMetricsLoading(true);
+      try {
+        const q = new URLSearchParams({
+          client_id: String(clientId),
+          period,
+        });
+        const res = await apiRequest<{ data: MarketingMetricsApiRow | null }>(`/api/marketing-metrics?${q.toString()}`);
+        setMetricsForm(metricsFromApiRow(res.data));
+        if (!opts?.silent) {
+          toast({
+            title: res.data ? "Métricas carregadas" : "Novo período",
+            description: res.data ? undefined : "Preencha e salve para criar o registro.",
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "";
+        toast({
+          title: "Erro ao carregar métricas",
+          description: /Rota n[oã]o encontrada|HTTP 404/i.test(msg)
+            ? "Endpoint /api/marketing-metrics não encontrado no backend ativo."
+            : msg || "Tente novamente.",
+          variant: "destructive",
+        });
+      } finally {
+        setMetricsLoading(false);
+      }
+    },
+    [metricsClientId, metricsManualClientId, metricsPeriod, toast],
+  );
+
+  useEffect(() => {
     const clientId =
-      parseNumericClientId(metricsManualClientId) ??
-      parseNumericClientId(metricsClientId);
+      parseNumericClientId(metricsManualClientId) ?? parseNumericClientId(metricsClientId);
     const period = metricsPeriod.trim();
-    if (clientId === null) {
-      toast({
-        title: metricsClientId || metricsManualClientId ? "ID do cliente inválido para métricas" : "Selecione um cliente",
-        description: metricsClientId || metricsManualClientId ? "Esta API de métricas aceita client_id numérico." : undefined,
-        variant: "destructive",
-      });
-      return;
-    }
-    if (period === "") {
-      toast({ title: "Informe o período", description: "Ex.: Abr/2026", variant: "destructive" });
-      return;
-    }
-    setMetricsLoading(true);
-    try {
-      const q = new URLSearchParams({
-        client_id: String(clientId),
-        period,
-      });
-      const res = await apiRequest<{ data: MarketingMetricsApiRow | null }>(`/api/marketing-metrics?${q.toString()}`);
-      setMetricsForm(metricsFromApiRow(res.data));
-      toast({ title: res.data ? "Métricas carregadas" : "Novo período", description: res.data ? undefined : "Preencha e salve para criar o registro." });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "";
-      toast({
-        title: "Erro ao carregar métricas",
-        description: /Rota n[oã]o encontrada|HTTP 404/i.test(msg)
-          ? "Endpoint /api/marketing-metrics não encontrado no backend ativo."
-          : msg || "Tente novamente.",
-        variant: "destructive",
-      });
-    } finally {
-      setMetricsLoading(false);
-    }
-  };
+    if (clientId === null || period === "") return;
+    const t = window.setTimeout(() => {
+      void loadMarketingMetrics({ silent: true });
+    }, 450);
+    return () => window.clearTimeout(t);
+  }, [metricsClientId, metricsManualClientId, metricsPeriod, loadMarketingMetrics]);
 
   const saveMarketingMetrics = async (e: FormEvent) => {
     e.preventDefault();
@@ -293,14 +310,13 @@ export function RelatoriosAdminPage() {
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
     if (!form.client_id || !form.title.trim()) return;
-    const url = form.url.trim();
     setSaving(true);
     try {
       const attachments = createFiles.length > 0 ? await filesToAttachmentPayload(createFiles) : [];
-      if (url === "" && attachments.length === 0) {
+      if (attachments.length === 0) {
         toast({
-          title: "Inclua arquivos ou um link",
-          description: "Envie pelo menos um arquivo ou preencha uma URL externa.",
+          title: "Inclua arquivos",
+          description: "Envie pelo menos um arquivo (PDF, imagem, etc.).",
           variant: "destructive",
         });
         return;
@@ -310,9 +326,8 @@ export function RelatoriosAdminPage() {
         body: {
           client_id: clientIdForPayload(form.client_id),
           title: form.title.trim(),
-          ...(url !== "" ? { url } : {}),
           summary: buildClientReportSummaryForApi(form.period_label, form.description),
-          ...(attachments.length > 0 ? { attachments } : {}),
+          attachments,
         },
       });
       toast({
@@ -340,7 +355,6 @@ export function RelatoriosAdminPage() {
       client_id: String(r.client_id),
       title: r.title,
       description: r.description ?? "",
-      url: r.url ?? "",
       period_label: r.period_label ?? "",
     });
     setEditFiles([]);
@@ -351,13 +365,20 @@ export function RelatoriosAdminPage() {
   const handleUpdate = async (e: FormEvent) => {
     e.preventDefault();
     if (!editing || !form.title.trim()) return;
-    const url = form.url.trim();
+    if (removeAllAttachments && editFiles.length === 0 && !(editing.url && editing.url.trim() !== "")) {
+      toast({
+        title: "Inclua novos arquivos",
+        description:
+          "Para remover todos os anexos, envie pelo menos um arquivo novo ou mantenha um link externo já cadastrado neste envio.",
+        variant: "destructive",
+      });
+      return;
+    }
     setSaving(true);
     try {
       const body: Record<string, unknown> = {
         title: form.title.trim(),
         summary: buildClientReportSummaryForApi(form.period_label, form.description),
-        url: url === "" ? null : url,
       };
       if (editFiles.length > 0) {
         body.attachments = await filesToAttachmentPayload(editFiles);
@@ -493,41 +514,12 @@ export function RelatoriosAdminPage() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Clientes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{clientRows.length}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Tarefas</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{tasks.data.length}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Faturamento (org.)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">
-              R$ {totalFaturamento.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <div>
             <CardTitle className="text-base">Materiais para o cliente</CardTitle>
             <p className="mt-1 text-xs text-text-3">
-              Escolha o cliente e envie PDFs, imagens ou outros arquivos (convertidos em base64 na API; o servidor grava em formato binário no MongoDB). Opcionalmente inclua um link externo.
+              Escolha o cliente e envie PDFs, imagens ou outros arquivos (convertidos em base64 na API; o servidor grava em formato binário no MongoDB).
             </p>
           </div>
           <Button size="sm" className="gap-1.5 text-xs shrink-0" type="button" onClick={() => setOpenCreate(true)}>
@@ -655,15 +647,6 @@ export function RelatoriosAdminPage() {
                 ) : null}
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Link externo (opcional)</Label>
-                <Input
-                  type="url"
-                  value={form.url}
-                  onChange={(e) => setForm((p) => ({ ...p, url: e.target.value }))}
-                  placeholder="https://..."
-                />
-              </div>
-              <div className="space-y-1">
                 <Label className="text-xs">Descrição (opcional)</Label>
                 <Input
                   value={form.description}
@@ -723,7 +706,7 @@ export function RelatoriosAdminPage() {
                         if (e.target.checked) setEditFiles([]);
                       }}
                     />
-                    Remover todos os anexos (é obrigatório manter um link externo se remover os arquivos)
+                    Remover todos os anexos atuais (obrigatório enviar arquivos novos abaixo, salvo envios que já tenham link externo)
                   </label>
                 </div>
               ) : null}
@@ -751,10 +734,6 @@ export function RelatoriosAdminPage() {
                 {editFiles.length > 0 ? (
                   <p className="text-[11px] text-text-3">{editFiles.length} arquivo(s) — substituem os anexos atuais.</p>
                 ) : null}
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Link externo (opcional)</Label>
-                <Input type="url" value={form.url} onChange={(e) => setForm((p) => ({ ...p, url: e.target.value }))} placeholder="https://..." />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Descrição</Label>
