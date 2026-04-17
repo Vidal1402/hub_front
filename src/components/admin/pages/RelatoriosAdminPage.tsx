@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ExternalLink, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, FileUp, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   emptyMarketingMetricsValues,
   MarketingMetricsBoard,
@@ -18,6 +18,7 @@ import { apiRequest } from "@/lib/api";
 import {
   buildClientReportSummaryForApi,
   normalizeClientReportFromApi,
+  type NormalizedClientReport,
 } from "@/lib/clientReportsApi";
 import { useApiData } from "@/hooks/useApiData";
 import { useToast } from "@/hooks/use-toast";
@@ -44,18 +45,54 @@ function parseNumericClientId(raw: string): number | null {
 
 type ApiId = string | number;
 
-type ClientReportRow = {
-  id: ApiId;
-  client_id: ApiId;
-  title: string;
-  description?: string | null;
-  summary?: string | null;
-  url: string;
-  period_label?: string | null;
-  client_name?: string;
-  client_empresa?: string;
-  created_at?: string;
-};
+/** Limite alinhado ao backend (Railway): 3 MB/arquivo, 10 arquivos. */
+const MAX_ATTACHMENT_BYTES = 3 * 1024 * 1024;
+const MAX_ATTACHMENTS = 10;
+
+type AttachmentPayload = { filename: string; mime_type: string; data_base64: string };
+
+function readFileAsBase64Payload(file: File): Promise<AttachmentPayload> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? "");
+      const idx = dataUrl.indexOf("base64,");
+      const b64 = idx >= 0 ? dataUrl.slice(idx + 7) : "";
+      if (!b64) {
+        reject(new Error(`Não foi possível ler o arquivo: ${file.name}`));
+        return;
+      }
+      resolve({
+        filename: file.name,
+        mime_type: file.type || "application/octet-stream",
+        data_base64: b64,
+      });
+    };
+    reader.onerror = () => reject(new Error(`Falha ao ler: ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function filesToAttachmentPayload(files: File[]): Promise<AttachmentPayload[]> {
+  if (files.length > MAX_ATTACHMENTS) {
+    throw new Error(`Máximo de ${MAX_ATTACHMENTS} arquivos por envio.`);
+  }
+  const out: AttachmentPayload[] = [];
+  for (const f of files) {
+    if (f.size > MAX_ATTACHMENT_BYTES) {
+      throw new Error(`Arquivo muito grande (máx. 3 MB): ${f.name}`);
+    }
+    out.push(await readFileAsBase64Payload(f));
+  }
+  return out;
+}
+
+function clientLabelForReport(r: NormalizedClientReport, rows: ClientRow[]): string {
+  const idStr = String(r.client_id);
+  const match = rows.find((c) => c.id === idStr || String(c.numericId) === idStr);
+  if (match) return `${match.empresa} — ${match.name}`;
+  return `Cliente #${idStr}`;
+}
 type ClientRow = { id: string; numericId: number | null; name: string; empresa: string };
 
 function idToStringLoose(v: unknown): string {
@@ -132,13 +169,13 @@ export function RelatoriosAdminPage() {
   const invoices = useApiData<{ id: number; amount: number }[]>("/api/invoices", []);
   const reportsQuery = useQuery({
     queryKey: REPORTS_QUERY_KEY,
-    queryFn: async (): Promise<ClientReportRow[]> => {
+    queryFn: async (): Promise<NormalizedClientReport[]> => {
       try {
         const res = await apiRequest<{ data?: unknown[] }>("/api/client-reports");
         const list = Array.isArray(res.data) ? res.data : [];
         return list
           .filter((row): row is Record<string, unknown> => row != null && typeof row === "object" && !Array.isArray(row))
-          .map((row) => normalizeClientReportFromApi(row) as ClientReportRow);
+          .map((row) => normalizeClientReportFromApi(row));
       } catch {
         return [];
       }
@@ -242,9 +279,12 @@ export function RelatoriosAdminPage() {
 
   const [openCreate, setOpenCreate] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [editing, setEditing] = useState<ClientReportRow | null>(null);
+  const [editing, setEditing] = useState<NormalizedClientReport | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [createFiles, setCreateFiles] = useState<File[]>([]);
+  const [editFiles, setEditFiles] = useState<File[]>([]);
+  const [removeAllAttachments, setRemoveAllAttachments] = useState(false);
 
   const refreshReports = async () => {
     await queryClient.invalidateQueries({ queryKey: [...REPORTS_QUERY_KEY] });
@@ -252,24 +292,36 @@ export function RelatoriosAdminPage() {
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
-    if (!form.client_id || !form.title.trim() || !form.url.trim()) return;
+    if (!form.client_id || !form.title.trim()) return;
+    const url = form.url.trim();
     setSaving(true);
     try {
+      const attachments = createFiles.length > 0 ? await filesToAttachmentPayload(createFiles) : [];
+      if (url === "" && attachments.length === 0) {
+        toast({
+          title: "Inclua arquivos ou um link",
+          description: "Envie pelo menos um arquivo ou preencha uma URL externa.",
+          variant: "destructive",
+        });
+        return;
+      }
       await apiRequest("/api/client-reports", {
         method: "POST",
         body: {
           client_id: clientIdForPayload(form.client_id),
           title: form.title.trim(),
-          url: form.url.trim(),
+          ...(url !== "" ? { url } : {}),
           summary: buildClientReportSummaryForApi(form.period_label, form.description),
+          ...(attachments.length > 0 ? { attachments } : {}),
         },
       });
       toast({
-        title: "Relatório publicado",
-        description: "O cliente verá este item na aba Relatórios do portal.",
+        title: "Materiais enviados",
+        description: "O cliente verá na aba Relatórios do portal.",
       });
       setOpenCreate(false);
       setForm(emptyForm);
+      setCreateFiles([]);
       await refreshReports();
     } catch (err) {
       toast({
@@ -282,35 +334,46 @@ export function RelatoriosAdminPage() {
     }
   };
 
-  const startEdit = (r: ClientReportRow) => {
+  const startEdit = (r: NormalizedClientReport) => {
     setEditing(r);
     setForm({
       client_id: String(r.client_id),
       title: r.title,
       description: r.description ?? "",
-      url: r.url,
+      url: r.url ?? "",
       period_label: r.period_label ?? "",
     });
+    setEditFiles([]);
+    setRemoveAllAttachments(false);
     setEditOpen(true);
   };
 
   const handleUpdate = async (e: FormEvent) => {
     e.preventDefault();
-    if (!editing || !form.title.trim() || !form.url.trim()) return;
+    if (!editing || !form.title.trim()) return;
+    const url = form.url.trim();
     setSaving(true);
     try {
+      const body: Record<string, unknown> = {
+        title: form.title.trim(),
+        summary: buildClientReportSummaryForApi(form.period_label, form.description),
+        url: url === "" ? null : url,
+      };
+      if (editFiles.length > 0) {
+        body.attachments = await filesToAttachmentPayload(editFiles);
+      } else if (removeAllAttachments) {
+        body.attachments = [];
+      }
       await apiRequest(`/api/client-reports/${editing.id}`, {
         method: "PATCH",
-        body: {
-          title: form.title.trim(),
-          url: form.url.trim(),
-          summary: buildClientReportSummaryForApi(form.period_label, form.description),
-        },
+        body,
       });
       toast({ title: "Relatório atualizado" });
       setEditOpen(false);
       setEditing(null);
       setForm(emptyForm);
+      setEditFiles([]);
+      setRemoveAllAttachments(false);
       await refreshReports();
     } catch (err) {
       toast({
@@ -343,7 +406,7 @@ export function RelatoriosAdminPage() {
       <div>
         <h1 className="text-xl font-bold text-text-1">Relatórios</h1>
         <p className="text-sm text-text-3">
-          Quadro de performance (Meta, Google, orgânico, outros) por período e publicação de links por cliente — o portal mostra tudo na aba Relatórios.
+          Métricas de marketing por período e envio de arquivos (PDF, imagens, etc.) por cliente. No portal, o cliente abre os materiais na mesma aba.
         </p>
       </div>
 
@@ -462,44 +525,53 @@ export function RelatoriosAdminPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <div>
-            <CardTitle className="text-base">Relatórios no portal do cliente</CardTitle>
+            <CardTitle className="text-base">Materiais para o cliente</CardTitle>
             <p className="mt-1 text-xs text-text-3">
-              Use link para PDF (Drive, Dropbox), planilha ou dashboard. O cliente vê na aba Relatórios.
+              Escolha o cliente e envie PDFs, imagens ou outros arquivos (convertidos em base64 na API; o servidor grava em formato binário no MongoDB). Opcionalmente inclua um link externo.
             </p>
           </div>
           <Button size="sm" className="gap-1.5 text-xs shrink-0" type="button" onClick={() => setOpenCreate(true)}>
-            <Plus size={14} /> Publicar relatório
+            <Plus size={14} /> Enviar materiais
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
           {reportsLoading && <p className="text-xs text-text-3">Carregando…</p>}
           {!reportsLoading && reportsList.length === 0 && (
-            <p className="text-sm text-text-3">Nenhum relatório publicado. Clique em &quot;Publicar relatório&quot;.</p>
+            <p className="text-sm text-text-3">Nenhum envio ainda. Use &quot;Enviar materiais&quot;.</p>
           )}
           {reportsList.map((r) => (
             <div
-              key={r.id}
+              key={String(r.id)}
               className="flex flex-col gap-3 rounded-lg border border-border bg-card/50 p-4 sm:flex-row sm:items-start sm:justify-between"
             >
               <div className="min-w-0 flex-1 space-y-1">
                 <p className="text-sm font-semibold text-text-1">{r.title}</p>
                 <p className="text-xs text-text-3">
-                  {(r.client_empresa || r.client_name) && (
-                    <span className="font-medium text-text-2">{r.client_empresa || r.client_name}</span>
-                  )}
+                  <span className="font-medium text-text-2">{clientLabelForReport(r, clientRows)}</span>
                   {r.period_label ? ` · ${r.period_label}` : ""}
                 </p>
-                {r.description || r.summary ? (
-                  <p className="text-xs leading-relaxed text-text-3">{r.description || r.summary}</p>
+                {r.description ? <p className="text-xs leading-relaxed text-text-3">{r.description}</p> : null}
+                {r.url ? (
+                  <a
+                    href={r.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                  >
+                    Link externo <ExternalLink size={12} />
+                  </a>
                 ) : null}
-                <a
-                  href={r.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                >
-                  Abrir link <ExternalLink size={12} />
-                </a>
+                {r.attachments && r.attachments.length > 0 ? (
+                  <ul className="mt-1 space-y-0.5 text-[11px] text-text-3">
+                    {r.attachments.map((a, i) => (
+                      <li key={`${a.filename}-${i}`} className="flex items-center gap-1">
+                        <FileUp className="h-3 w-3 shrink-0 opacity-70" />
+                        <span className="truncate">{a.filename}</span>
+                        {a.size > 0 ? <span className="text-text-3">({(a.size / 1024).toFixed(0)} KB)</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
               <div className="flex shrink-0 gap-2">
                 <Button type="button" variant="outline" size="sm" className="h-8 gap-1 text-xs" onClick={() => startEdit(r)}>
@@ -521,10 +593,16 @@ export function RelatoriosAdminPage() {
       </Card>
 
       {openCreate && (
-        <Dialog open={openCreate} onOpenChange={setOpenCreate}>
+        <Dialog
+          open={openCreate}
+          onOpenChange={(o) => {
+            setOpenCreate(o);
+            if (!o) setCreateFiles([]);
+          }}
+        >
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>Publicar relatório</DialogTitle>
+              <DialogTitle>Enviar materiais ao cliente</DialogTitle>
             </DialogHeader>
             <form className="space-y-3" onSubmit={handleCreate}>
               <div className="space-y-1">
@@ -565,13 +643,24 @@ export function RelatoriosAdminPage() {
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Link (URL)</Label>
+                <Label className="text-xs">Arquivos (até {MAX_ATTACHMENTS}, máx. 3 MB cada)</Label>
+                <Input
+                  type="file"
+                  multiple
+                  className="w-full cursor-pointer text-sm"
+                  onChange={(e) => setCreateFiles(Array.from(e.target.files ?? []))}
+                />
+                {createFiles.length > 0 ? (
+                  <p className="text-[11px] text-text-3">{createFiles.length} arquivo(s) selecionado(s).</p>
+                ) : null}
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Link externo (opcional)</Label>
                 <Input
                   type="url"
                   value={form.url}
                   onChange={(e) => setForm((p) => ({ ...p, url: e.target.value }))}
                   placeholder="https://..."
-                  required
                 />
               </div>
               <div className="space-y-1">
@@ -588,7 +677,7 @@ export function RelatoriosAdminPage() {
                 </Button>
                 <Button type="submit" disabled={saving}>
                   {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Publicar
+                  Enviar
                 </Button>
               </DialogFooter>
             </form>
@@ -601,17 +690,43 @@ export function RelatoriosAdminPage() {
           open={editOpen}
           onOpenChange={(o) => {
             setEditOpen(o);
-            if (!o) setEditing(null);
+            if (!o) {
+              setEditing(null);
+              setEditFiles([]);
+              setRemoveAllAttachments(false);
+            }
           }}
         >
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Editar relatório</DialogTitle>
+              <DialogTitle>Editar envio</DialogTitle>
             </DialogHeader>
             <form className="space-y-3" onSubmit={handleUpdate}>
               <p className="text-xs text-text-3">
-                Cliente: <span className="font-medium text-text-2">{editing.client_empresa || editing.client_name || `#${editing.client_id}`}</span>
+                Cliente:{" "}
+                <span className="font-medium text-text-2">{clientLabelForReport(editing, clientRows)}</span>
               </p>
+              {editing.attachments && editing.attachments.length > 0 ? (
+                <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-[11px] text-text-3">
+                  <p className="font-medium text-text-2">Anexos atuais</p>
+                  <ul className="mt-1 list-inside list-disc">
+                    {editing.attachments.map((a) => (
+                      <li key={a.filename}>{a.filename}</li>
+                    ))}
+                  </ul>
+                  <label className="mt-2 flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={removeAllAttachments}
+                      onChange={(e) => {
+                        setRemoveAllAttachments(e.target.checked);
+                        if (e.target.checked) setEditFiles([]);
+                      }}
+                    />
+                    Remover todos os anexos (é obrigatório manter um link externo se remover os arquivos)
+                  </label>
+                </div>
+              ) : null}
               <div className="space-y-1">
                 <Label className="text-xs">Título</Label>
                 <Input
@@ -625,8 +740,21 @@ export function RelatoriosAdminPage() {
                 <Input value={form.period_label} onChange={(e) => setForm((p) => ({ ...p, period_label: e.target.value }))} />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Link</Label>
-                <Input type="url" value={form.url} onChange={(e) => setForm((p) => ({ ...p, url: e.target.value }))} required />
+                <Label className="text-xs">Substituir anexos (opcional)</Label>
+                <Input
+                  type="file"
+                  multiple
+                  disabled={removeAllAttachments}
+                  className="w-full cursor-pointer text-sm disabled:opacity-50"
+                  onChange={(e) => setEditFiles(Array.from(e.target.files ?? []))}
+                />
+                {editFiles.length > 0 ? (
+                  <p className="text-[11px] text-text-3">{editFiles.length} arquivo(s) — substituem os anexos atuais.</p>
+                ) : null}
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Link externo (opcional)</Label>
+                <Input type="url" value={form.url} onChange={(e) => setForm((p) => ({ ...p, url: e.target.value }))} placeholder="https://..." />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Descrição</Label>

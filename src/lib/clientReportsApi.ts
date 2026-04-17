@@ -25,6 +25,15 @@ export function buildClientReportSummaryForApi(periodLabel: string, description:
   return null;
 }
 
+export type ReportAttachmentMeta = {
+  attachment_id?: number | null;
+  filename: string;
+  mime_type: string;
+  size: number;
+  /** Presente só em GET /api/client-reports/:id (detalhe com arquivo). */
+  data_base64?: string;
+};
+
 export type NormalizedClientReport = {
   id: number | string;
   client_id: number | string;
@@ -36,6 +45,7 @@ export type NormalizedClientReport = {
   client_name?: string;
   client_empresa?: string;
   created_at?: string;
+  attachments?: ReportAttachmentMeta[];
 };
 
 export function normalizeClientReportFromApi(r: Record<string, unknown>): NormalizedClientReport {
@@ -51,6 +61,19 @@ export function normalizeClientReportFromApi(r: Record<string, unknown>): Normal
   const explicitPeriod =
     r.period_label != null && String(r.period_label).trim() !== "" ? String(r.period_label).trim() : "";
 
+  const attachmentsRaw = r.attachments;
+  const attachments: ReportAttachmentMeta[] = Array.isArray(attachmentsRaw)
+    ? attachmentsRaw
+        .filter((a): a is Record<string, unknown> => a != null && typeof a === "object" && !Array.isArray(a))
+        .map((a) => ({
+          attachment_id: a.attachment_id != null ? Number(a.attachment_id) : null,
+          filename: String(a.filename ?? "arquivo"),
+          mime_type: String(a.mime_type ?? "application/octet-stream"),
+          size: Number(a.size ?? 0) || 0,
+          data_base64: typeof a.data_base64 === "string" ? a.data_base64 : undefined,
+        }))
+    : [];
+
   return {
     id: typeof id === "number" || typeof id === "string" ? id : 0,
     client_id: typeof clientId === "number" || typeof clientId === "string" ? clientId : 0,
@@ -62,5 +85,6 @@ export function normalizeClientReportFromApi(r: Record<string, unknown>): Normal
     client_name: r.client_name != null ? String(r.client_name) : undefined,
     client_empresa: r.client_empresa != null ? String(r.client_empresa) : undefined,
     created_at: typeof r.created_at === "string" ? r.created_at : undefined,
+    attachments,
   };
 }

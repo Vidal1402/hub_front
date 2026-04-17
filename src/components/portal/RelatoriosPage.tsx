@@ -5,7 +5,8 @@ import {
   metricsFromApiRow,
   type MarketingMetricsApiRow,
 } from "@/components/marketing/MarketingMetricsBoard";
-import { normalizeClientReportFromApi } from "@/lib/clientReportsApi";
+import { normalizeClientReportFromApi, type ReportAttachmentMeta } from "@/lib/clientReportsApi";
+import { apiRequest } from "@/lib/api";
 import { useApiData } from "@/hooks/useApiData";
 import { useAuth } from "@/hooks/useAuth";
 import { PageHeader, PortalCard } from "./Primitives";
@@ -30,6 +31,7 @@ type PublishedReport = {
   period_label?: string | null;
   client_id?: number;
   created_at?: string;
+  attachments?: ReportAttachmentMeta[];
 };
 
 type MarketingMetricsListRow = MarketingMetricsApiRow & {
@@ -38,6 +40,23 @@ type MarketingMetricsListRow = MarketingMetricsApiRow & {
   period_label?: string;
   updated_at?: string;
 };
+
+function base64ToBlob(b64: string, mime: string): Blob {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime || "application/octet-stream" });
+}
+
+function downloadAttachmentFromBase64(name: string, mime: string, b64: string) {
+  const blob = base64ToBlob(b64, mime);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 function normalizeMetricsRow(raw: unknown): MarketingMetricsListRow | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -105,6 +124,8 @@ export function RelatoriosPage() {
   const marketingMetrics = useApiData<unknown[]>("/api/marketing-metrics", []);
 
   const [metricsIndex, setMetricsIndex] = useState(0);
+  const [reportDetailById, setReportDetailById] = useState<Record<number, PublishedReport>>({});
+  const [loadingReportId, setLoadingReportId] = useState<number | null>(null);
 
   const invoiceTotal = useMemo(() => invoices.data.reduce((a, i) => a + Number(i.amount || 0), 0), [invoices.data]);
   const pendingInvoices = useMemo(
@@ -146,6 +167,7 @@ export function RelatoriosPage() {
           period_label: n.period_label,
           client_id: Number(n.client_id) || undefined,
           created_at: n.created_at,
+          attachments: n.attachments,
         };
         return out;
       });
@@ -163,6 +185,36 @@ export function RelatoriosPage() {
   const safeMetricsIndex = metricsRows.length > 0 ? Math.min(metricsIndex, metricsRows.length - 1) : 0;
   const selectedMetricsRow = metricsRows.length > 0 ? metricsRows[safeMetricsIndex] : null;
   const metricsReadValues = useMemo(() => metricsFromApiRow(selectedMetricsRow), [selectedMetricsRow]);
+
+  const loadReportDetail = async (id: number) => {
+    if (reportDetailById[id]) return;
+    setLoadingReportId(id);
+    try {
+      const res = await apiRequest<{ data?: Record<string, unknown> }>(`/api/client-reports/${id}`);
+      const row = res.data;
+      if (row && typeof row === "object") {
+        const n = normalizeClientReportFromApi(row);
+        setReportDetailById((prev) => ({
+          ...prev,
+          [id]: {
+            id: Number(n.id) || 0,
+            title: n.title,
+            url: n.url,
+            description: n.description || null,
+            summary: n.summary,
+            period_label: n.period_label,
+            client_id: Number(n.client_id) || undefined,
+            created_at: n.created_at,
+            attachments: n.attachments,
+          },
+        }));
+      }
+    } catch {
+      /* mantém só o que veio da lista */
+    } finally {
+      setLoadingReportId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -244,33 +296,87 @@ export function RelatoriosPage() {
 
       <PortalCard>
         <div className="p-5">
-          <p className="mb-3 text-sm font-bold text-text-1">Relatórios enviados pela equipe</p>
+          <p className="mb-3 text-sm font-bold text-text-1">Materiais da equipe</p>
           <p className="mb-4 text-xs leading-relaxed text-text-3">
-            Links e materiais que o administrador publica para o seu cadastro (PDF, planilhas, dashboards).
+            Documentos e imagens enviados pelo administrador para o seu cadastro. Se houver arquivos, use &quot;Carregar arquivos&quot; para visualizar ou baixar.
           </p>
           {published.loading && <p className="text-xs text-text-3">Carregando...</p>}
           {published.error && <p className="text-xs text-tag-amber">Não foi possível carregar os relatórios publicados. {published.error}</p>}
           {!published.loading && !published.error && publishedRows.length === 0 && (
             <p className="text-xs leading-relaxed text-text-3">
-              Ainda não há relatórios para você. Quando o time publicar algo em <strong>Admin → Relatórios</strong>, aparecerá aqui.
+              Ainda não há materiais para você. Quando o time enviar algo em <strong>Admin → Relatórios</strong>, aparecerá aqui.
             </p>
           )}
           <div className="space-y-3">
-            {publishedRows.map((r) => (
-              <div key={r.id} className="rounded-xl border border-primary/25 bg-primary/[0.06] p-4">
-                <p className="text-sm font-semibold text-text-1">{r.title}</p>
-                {r.period_label ? <p className="mt-0.5 text-[11px] text-text-3">{r.period_label}</p> : null}
-                {(r.description || r.summary) ? <p className="mt-2 text-xs leading-relaxed text-text-3">{r.description || r.summary}</p> : null}
-                <a
-                  href={r.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
-                >
-                  Abrir link <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-              </div>
-            ))}
+            {publishedRows.map((r) => {
+              const detail = reportDetailById[r.id];
+              const hasFiles = (detail?.attachments?.length ?? r.attachments?.length ?? 0) > 0;
+              const metaCount = r.attachments?.length ?? 0;
+              return (
+                <div key={r.id} className="rounded-xl border border-primary/25 bg-primary/[0.06] p-4">
+                  <p className="text-sm font-semibold text-text-1">{r.title}</p>
+                  {r.period_label ? <p className="mt-0.5 text-[11px] text-text-3">{r.period_label}</p> : null}
+                  {(r.description || r.summary) ? (
+                    <p className="mt-2 text-xs leading-relaxed text-text-3">{r.description || r.summary}</p>
+                  ) : null}
+                  {r.url ? (
+                    <a
+                      href={r.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+                    >
+                      Link externo <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  ) : null}
+                  {metaCount > 0 && !detail ? (
+                    <p className="mt-2 text-[11px] text-text-3">{metaCount} arquivo(s) anexado(s).</p>
+                  ) : null}
+                  {metaCount > 0 && !detail ? (
+                    <button
+                      type="button"
+                      onClick={() => void loadReportDetail(r.id)}
+                      disabled={loadingReportId === r.id}
+                      className="mt-2 rounded-lg border border-primary/40 bg-background px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-60"
+                    >
+                      {loadingReportId === r.id ? "Carregando…" : "Carregar arquivos"}
+                    </button>
+                  ) : null}
+                  {detail?.attachments && detail.attachments.length > 0 ? (
+                    <div className="mt-3 space-y-3">
+                      {detail.attachments.map((att, idx) => {
+                        const b64 = att.data_base64;
+                        if (!b64) return null;
+                        const mime = att.mime_type || "application/octet-stream";
+                        const isImg = mime.startsWith("image/");
+                        return (
+                          <div key={`${att.filename}-${idx}`} className="rounded-lg border border-border/80 bg-card/40 p-2">
+                            <p className="mb-2 text-[11px] font-medium text-text-2">{att.filename}</p>
+                            {isImg ? (
+                              <img
+                                src={`data:${mime};base64,${b64}`}
+                                alt={att.filename}
+                                className="max-h-64 w-full max-w-md rounded-md object-contain"
+                              />
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => downloadAttachmentFromBase64(att.filename, mime, b64)}
+                              className="mt-2 text-xs font-semibold text-primary hover:underline"
+                            >
+                              Baixar arquivo
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  {detail && !hasFiles && !r.url ? (
+                    <p className="mt-2 text-[11px] text-text-3">Nenhum arquivo neste envio.</p>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </div>
       </PortalCard>
@@ -379,8 +485,8 @@ export function RelatoriosPage() {
                 Em <strong>Produção</strong>, o cliente abre solicitações; a equipe administra o quadro no painel administrativo.
               </li>
               <li>
-                Em <strong>Relatórios</strong> (admin), use <strong>Métricas de marketing</strong> para o quadro por período e/ou <strong>Publicar relatório</strong>{" "}
-                para enviar link (URL) — ambos aparecem nesta aba no portal.
+                Em <strong>Relatórios</strong> (admin), use <strong>Métricas de marketing</strong> e/ou <strong>Enviar materiais</strong> para anexar arquivos ao
+                cliente — tudo aparece nesta aba no portal.
               </li>
             </ol>
           </div>

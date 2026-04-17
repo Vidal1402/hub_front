@@ -105,6 +105,11 @@ final class AuthController
             Response::json(['error' => 'validation_error', 'message' => 'email inválido'], 422);
         }
 
+        $allowedRoles = ['cliente', 'colaborador', 'admin', 'gestor'];
+        if (!in_array($role, $allowedRoles, true)) {
+            Response::json(['error' => 'validation_error', 'message' => 'role inválido'], 422);
+        }
+
         $existing = $this->users->findByEmail($email);
         $hash = password_hash($password, PASSWORD_BCRYPT);
 

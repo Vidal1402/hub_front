@@ -60,10 +60,11 @@ $clienteOnly = function (Request $request, array $params, array $context): array
     return [];
 };
 
-$staffOnly = function (Request $request, array $params, array $context): array {
-    $role = $context['user']['role'] ?? '';
-    if ($role === 'cliente') {
-        Response::json(['error' => 'forbidden', 'message' => 'Apenas a equipe pode alterar o andamento das tarefas'], 403);
+/** Admin e colaboradores podem mover/editar tarefas; gestor só visualiza (área admin em leitura). */
+$taskMutationAllowed = function (Request $request, array $params, array $context): array {
+    $role = (string) ($context['user']['role'] ?? '');
+    if (!in_array($role, ['admin', 'colaborador'], true)) {
+        Response::json(['error' => 'forbidden', 'message' => 'Apenas admin ou colaborador podem alterar tarefas'], 403);
     }
     return [];
 };
@@ -86,8 +87,8 @@ $router->add('DELETE', '/api/clients/{id}', fn(Request $request, array $params, 
 
 $router->add('GET', '/api/tasks', fn(Request $request, array $params, array $context) => $taskController->index($context), [$authMiddleware]);
 $router->add('POST', '/api/tasks', fn(Request $request, array $params, array $context) => $taskController->store($request, $context), [$authMiddleware, $clienteOnly]);
-$router->add('PATCH', '/api/tasks/{id}', fn(Request $request, array $params, array $context) => $taskController->update($request, $params, $context), [$authMiddleware, $staffOnly]);
-$router->add('PATCH', '/api/tasks/{id}/status', fn(Request $request, array $params, array $context) => $taskController->updateStatus($request, $params, $context), [$authMiddleware, $staffOnly]);
+$router->add('PATCH', '/api/tasks/{id}', fn(Request $request, array $params, array $context) => $taskController->update($request, $params, $context), [$authMiddleware, $taskMutationAllowed]);
+$router->add('PATCH', '/api/tasks/{id}/status', fn(Request $request, array $params, array $context) => $taskController->updateStatus($request, $params, $context), [$authMiddleware, $taskMutationAllowed]);
 
 $router->add('GET', '/api/invoices', fn(Request $request, array $params, array $context) => $invoiceController->index($context), [$authMiddleware]);
 $router->add('POST', '/api/invoices', fn(Request $request, array $params, array $context) => $invoiceController->store($request, $context), [$authMiddleware, $adminOnly]);
