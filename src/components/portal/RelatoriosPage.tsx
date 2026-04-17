@@ -24,16 +24,52 @@ type PublishedReport = {
   id: number;
   title: string;
   description?: string | null;
+  summary?: string | null;
   url: string;
   period_label?: string | null;
+  client_id?: number;
   created_at?: string;
 };
 
 type MarketingMetricsListRow = MarketingMetricsApiRow & {
   id?: number;
+  client_id?: number;
   period_label?: string;
   updated_at?: string;
 };
+
+function normalizeMetricsRow(raw: unknown): MarketingMetricsListRow | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const row = raw as Record<string, unknown>;
+  const payload =
+    row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)
+      ? (row.payload as Record<string, unknown>)
+      : null;
+
+  const src = payload ? { ...payload, ...row } : row;
+  return {
+    id: Number(src.id ?? 0) || undefined,
+    client_id: Number(src.client_id ?? 0) || undefined,
+    period_label: String(src.period_label ?? src.period ?? "").trim() || undefined,
+    updated_at: typeof src.updated_at === "string" ? src.updated_at : undefined,
+    meta_account_id: (src.meta_account_id as string | null | undefined) ?? null,
+    meta_account_name: (src.meta_account_name as string | null | undefined) ?? null,
+    meta_spend: Number(src.meta_spend ?? 0),
+    meta_leads: Number(src.meta_leads ?? 0),
+    meta_conversions: Number(src.meta_conversions ?? 0),
+    google_account_id: (src.google_account_id as string | null | undefined) ?? null,
+    google_account_name: (src.google_account_name as string | null | undefined) ?? null,
+    google_spend: Number(src.google_spend ?? 0),
+    google_leads: Number(src.google_leads ?? 0),
+    google_conversions: Number(src.google_conversions ?? 0),
+    organic_spend: Number(src.organic_spend ?? 0),
+    organic_leads: Number(src.organic_leads ?? 0),
+    organic_conversions: Number(src.organic_conversions ?? 0),
+    outros_spend: Number(src.outros_spend ?? 0),
+    outros_leads: Number(src.outros_leads ?? 0),
+    outros_conversions: Number(src.outros_conversions ?? 0),
+  };
+}
 
 function money(n: number) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -65,7 +101,7 @@ export function RelatoriosPage() {
   const tasks = useApiData<Task[]>("/api/tasks", []);
   const clientMe = useApiData<ClientMe>("/api/clients/me", null);
   const published = useApiData<PublishedReport[]>("/api/client-reports", []);
-  const marketingMetrics = useApiData<MarketingMetricsListRow[]>("/api/marketing-metrics", []);
+  const marketingMetrics = useApiData<unknown[]>("/api/marketing-metrics", []);
 
   const [metricsIndex, setMetricsIndex] = useState(0);
 
@@ -83,8 +119,21 @@ export function RelatoriosPage() {
     }
     return m;
   }, [tasks.data]);
+  const linkedClient = clientMe.data;
+  const showLinkHint = isCliente && !clientMe.loading && linkedClient == null && !clientMe.error;
 
-  const metricsRows = marketingMetrics.data;
+  const metricsRows = useMemo(() => {
+    const rows = Array.isArray(marketingMetrics.data) ? marketingMetrics.data : [];
+    const normalized = rows
+      .map(normalizeMetricsRow)
+      .filter((row): row is MarketingMetricsListRow => row !== null);
+    if (!linkedClient?.id) return normalized;
+    return normalized.filter((row) => row.client_id == null || row.client_id === linkedClient.id);
+  }, [marketingMetrics.data, linkedClient?.id]);
+  const publishedRows = useMemo(() => {
+    if (!linkedClient?.id) return published.data;
+    return published.data.filter((r) => r.client_id == null || r.client_id === linkedClient.id);
+  }, [published.data, linkedClient?.id]);
   useEffect(() => {
     if (metricsRows.length === 0) return;
     setMetricsIndex((i) => Math.min(i, metricsRows.length - 1));
@@ -93,9 +142,6 @@ export function RelatoriosPage() {
   const safeMetricsIndex = metricsRows.length > 0 ? Math.min(metricsIndex, metricsRows.length - 1) : 0;
   const selectedMetricsRow = metricsRows.length > 0 ? metricsRows[safeMetricsIndex] : null;
   const metricsReadValues = useMemo(() => metricsFromApiRow(selectedMetricsRow), [selectedMetricsRow]);
-
-  const linkedClient = clientMe.data;
-  const showLinkHint = isCliente && !clientMe.loading && linkedClient == null && !clientMe.error;
 
   return (
     <div className="space-y-6">
@@ -106,7 +152,7 @@ export function RelatoriosPage() {
 
       {clientMe.error && (
         <p className="rounded-md border border-tag-amber/20 bg-tag-amber-bg px-3 py-2 text-xs text-tag-amber">
-          Não foi possível verificar o vínculo com o cadastro de cliente.
+          Não foi possível verificar o vínculo com o cadastro de cliente. {clientMe.error}
         </p>
       )}
 
@@ -139,7 +185,7 @@ export function RelatoriosPage() {
           </p>
           {marketingMetrics.loading && <p className="text-xs text-text-3">Carregando métricas...</p>}
           {marketingMetrics.error && (
-            <p className="mb-3 text-xs text-tag-amber">Não foi possível carregar as métricas de marketing.</p>
+            <p className="mb-3 text-xs text-tag-amber">Não foi possível carregar as métricas de marketing. {marketingMetrics.error}</p>
           )}
           {!marketingMetrics.loading && !marketingMetrics.error && metricsRows.length === 0 && (
             <p className="mb-4 text-xs leading-relaxed text-text-3">
@@ -182,18 +228,18 @@ export function RelatoriosPage() {
             Links e materiais que o administrador publica para o seu cadastro (PDF, planilhas, dashboards).
           </p>
           {published.loading && <p className="text-xs text-text-3">Carregando...</p>}
-          {published.error && <p className="text-xs text-tag-amber">Não foi possível carregar os relatórios publicados.</p>}
-          {!published.loading && !published.error && published.data.length === 0 && (
+          {published.error && <p className="text-xs text-tag-amber">Não foi possível carregar os relatórios publicados. {published.error}</p>}
+          {!published.loading && !published.error && publishedRows.length === 0 && (
             <p className="text-xs leading-relaxed text-text-3">
               Ainda não há relatórios para você. Quando o time publicar algo em <strong>Admin → Relatórios</strong>, aparecerá aqui.
             </p>
           )}
           <div className="space-y-3">
-            {published.data.map((r) => (
+            {publishedRows.map((r) => (
               <div key={r.id} className="rounded-xl border border-primary/25 bg-primary/[0.06] p-4">
                 <p className="text-sm font-semibold text-text-1">{r.title}</p>
                 {r.period_label ? <p className="mt-0.5 text-[11px] text-text-3">{r.period_label}</p> : null}
-                {r.description ? <p className="mt-2 text-xs leading-relaxed text-text-3">{r.description}</p> : null}
+                {(r.description || r.summary) ? <p className="mt-2 text-xs leading-relaxed text-text-3">{r.description || r.summary}</p> : null}
                 <a
                   href={r.url}
                   target="_blank"

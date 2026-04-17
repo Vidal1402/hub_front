@@ -1,3 +1,4 @@
+/** Origem pública da API no Railway. Rotas: `GET /api/clients`, `POST /api/auth/login`, etc. */
 const PROD_FALLBACK_API = "https://backflow-production.up.railway.app";
 
 export type ApiUser = {

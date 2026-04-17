@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -18,8 +18,12 @@ import { apiRequest } from "@/lib/api";
 import { useApiData } from "@/hooks/useApiData";
 import { useToast } from "@/hooks/use-toast";
 
+/** Lista de relatórios publicados (bloco inferior da página). O select "Selecione" usa só GET /api/clients. */
 const REPORTS_QUERY_KEY = ["api", "/api/client-reports"] as const;
 const METRICS_QUERY_KEY = ["api", "/api/marketing-metrics"] as const;
+
+const REPORTS_STALE_MS = 30 * 60_000;
+const REPORTS_GC_MS = 24 * 60 * 60_000;
 
 function defaultPeriodLabel(): string {
   const d = new Date();
@@ -27,16 +31,18 @@ function defaultPeriodLabel(): string {
   return `${months[d.getMonth()]}/${d.getFullYear()}`;
 }
 
-/** ID numérico do select; API pode mandar id como string. */
-function parseClientIdFromSelect(raw: string): number | null {
+/** Para métricas, backend atual espera client_id numérico. */
+function parseNumericClientId(raw: string): number | null {
   const n = Number.parseInt(String(raw).trim(), 10);
   if (!Number.isFinite(n) || n <= 0) return null;
   return n;
 }
 
+type ApiId = string | number;
+
 type ClientReportRow = {
-  id: number;
-  client_id: number;
+  id: ApiId;
+  client_id: ApiId;
   title: string;
   description?: string | null;
   url: string;
@@ -45,7 +51,58 @@ type ClientReportRow = {
   client_empresa?: string;
   created_at?: string;
 };
-type ClientRow = { id: number; name: string; empresa: string };
+type ClientRow = { id: string; numericId: number | null; name: string; empresa: string };
+
+function idToStringLoose(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string" || typeof v === "number" || typeof v === "bigint") {
+    return String(v).trim();
+  }
+  if (typeof v === "object" && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    const oid = o.$oid;
+    if (typeof oid === "string" && oid.trim() !== "") return oid.trim();
+  }
+  return "";
+}
+
+function clientIdForPayload(raw: string): string | number {
+  const t = raw.trim();
+  if (/^\d+$/.test(t)) return Number.parseInt(t, 10);
+  return t;
+}
+
+/** GET /api/clients — aceita `id` numérico, string, `_id` e `{ _id: { $oid } }`. */
+function rowsForClientSelect(raw: unknown): ClientRow[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ClientRow[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const r = item as Record<string, unknown>;
+    const id =
+      idToStringLoose(r.id) ||
+      idToStringLoose(r._id) ||
+      idToStringLoose(r.ID) ||
+      idToStringLoose(r.client_id);
+    if (id === "") continue;
+    const numericIdCandidates = [
+      idToStringLoose(r.client_id),
+      idToStringLoose(r.id),
+      idToStringLoose(r.ID),
+      idToStringLoose(r.clientId),
+      idToStringLoose(r.legacy_id),
+      idToStringLoose(r.legacyId),
+    ];
+    const numericId = numericIdCandidates.reduce<number | null>((found, candidate) => {
+      if (found !== null) return found;
+      return parseNumericClientId(candidate);
+    }, null);
+    const name = String(r.name ?? r.nome ?? "").trim();
+    const empresa = String(r.empresa ?? r.company ?? "").trim();
+    out.push({ id, numericId, name, empresa: empresa || name || `Cliente #${id}` });
+  }
+  return out;
+}
 
 const emptyForm = {
   client_id: "",
@@ -59,10 +116,7 @@ export function RelatoriosAdminPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const clients = useApiData<ClientRow[]>("/api/clients", []);
-  const clientRows = useMemo(
-    () => (Array.isArray(clients.data) ? clients.data : []),
-    [clients.data],
-  );
+  const clientRows = useMemo(() => rowsForClientSelect(clients.data as unknown), [clients.data]);
 
   /* Garante refetch ao abrir a tela (cache antigo ou prefetch sem token às vezes deixa lista vazia). */
   useEffect(() => {
@@ -71,21 +125,44 @@ export function RelatoriosAdminPage() {
 
   const tasks = useApiData<{ id: number; status: string }[]>("/api/tasks", []);
   const invoices = useApiData<{ id: number; amount: number }[]>("/api/invoices", []);
-  const reports = useApiData<ClientReportRow[]>("/api/client-reports", []);
+  const reportsQuery = useQuery({
+    queryKey: REPORTS_QUERY_KEY,
+    queryFn: async (): Promise<ClientReportRow[]> => {
+      try {
+        const res = await apiRequest<{ data?: ClientReportRow[] }>("/api/client-reports");
+        return Array.isArray(res.data) ? res.data : [];
+      } catch {
+        return [];
+      }
+    },
+    staleTime: REPORTS_STALE_MS,
+    gcTime: REPORTS_GC_MS,
+    retry: 0,
+    refetchOnWindowFocus: false,
+  });
+  const reportsList = reportsQuery.data ?? [];
+  const reportsLoading = reportsQuery.isPending;
 
   const totalFaturamento = invoices.data.reduce((acc, item) => acc + Number(item.amount || 0), 0);
 
   const [metricsClientId, setMetricsClientId] = useState("");
+  const [metricsManualClientId, setMetricsManualClientId] = useState("");
   const [metricsPeriod, setMetricsPeriod] = useState(() => defaultPeriodLabel());
   const [metricsForm, setMetricsForm] = useState<MarketingMetricsValues>(() => emptyMarketingMetricsValues());
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsSaving, setMetricsSaving] = useState(false);
 
   const loadMarketingMetrics = async () => {
-    const clientId = parseClientIdFromSelect(metricsClientId);
+    const clientId =
+      parseNumericClientId(metricsManualClientId) ??
+      parseNumericClientId(metricsClientId);
     const period = metricsPeriod.trim();
     if (clientId === null) {
-      toast({ title: "Selecione um cliente", variant: "destructive" });
+      toast({
+        title: metricsClientId || metricsManualClientId ? "ID do cliente inválido para métricas" : "Selecione um cliente",
+        description: metricsClientId || metricsManualClientId ? "Esta API de métricas aceita client_id numérico." : undefined,
+        variant: "destructive",
+      });
       return;
     }
     if (period === "") {
@@ -102,9 +179,12 @@ export function RelatoriosAdminPage() {
       setMetricsForm(metricsFromApiRow(res.data));
       toast({ title: res.data ? "Métricas carregadas" : "Novo período", description: res.data ? undefined : "Preencha e salve para criar o registro." });
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
       toast({
         title: "Erro ao carregar métricas",
-        description: err instanceof Error ? err.message : "Tente novamente.",
+        description: /Rota n[oã]o encontrada|HTTP 404/i.test(msg)
+          ? "Endpoint /api/marketing-metrics não encontrado no backend ativo."
+          : msg || "Tente novamente.",
         variant: "destructive",
       });
     } finally {
@@ -114,10 +194,16 @@ export function RelatoriosAdminPage() {
 
   const saveMarketingMetrics = async (e: FormEvent) => {
     e.preventDefault();
-    const clientId = parseClientIdFromSelect(metricsClientId);
+    const clientId =
+      parseNumericClientId(metricsManualClientId) ??
+      parseNumericClientId(metricsClientId);
     const period = metricsPeriod.trim();
     if (clientId === null) {
-      toast({ title: "Selecione um cliente", variant: "destructive" });
+      toast({
+        title: metricsClientId || metricsManualClientId ? "ID do cliente inválido para métricas" : "Selecione um cliente",
+        description: metricsClientId || metricsManualClientId ? "Esta API de métricas aceita client_id numérico." : undefined,
+        variant: "destructive",
+      });
       return;
     }
     if (period === "") {
@@ -133,9 +219,12 @@ export function RelatoriosAdminPage() {
       toast({ title: "Métricas salvas", description: "O cliente verá na aba Relatórios do portal." });
       await queryClient.invalidateQueries({ queryKey: [...METRICS_QUERY_KEY] });
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
       toast({
         title: "Erro ao salvar",
-        description: err instanceof Error ? err.message : "Tente novamente.",
+        description: /Rota n[oã]o encontrada|HTTP 404/i.test(msg)
+          ? "Endpoint /api/marketing-metrics não encontrado no backend ativo."
+          : msg || "Tente novamente.",
         variant: "destructive",
       });
     } finally {
@@ -161,7 +250,7 @@ export function RelatoriosAdminPage() {
       await apiRequest("/api/client-reports", {
         method: "POST",
         body: {
-          client_id: Number(form.client_id),
+          client_id: clientIdForPayload(form.client_id),
           title: form.title.trim(),
           description: form.description.trim() || null,
           url: form.url.trim(),
@@ -228,7 +317,7 @@ export function RelatoriosAdminPage() {
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: ApiId) => {
     if (!window.confirm("Remover este relatório do portal deste cliente?")) return;
     try {
       await apiRequest(`/api/client-reports/${id}`, { method: "DELETE" });
@@ -284,16 +373,23 @@ export function RelatoriosAdminPage() {
                   disabled={clients.loading && clientRows.length === 0}
                 >
                   <option value="">Selecione</option>
-                  {clientRows.map((c) => {
-                    const oid = typeof c.id === "number" ? c.id : Number.parseInt(String(c.id), 10);
-                    if (!Number.isFinite(oid) || oid <= 0) return null;
-                    return (
-                      <option key={oid} value={String(oid)}>
-                        {c.empresa} — {c.name}
-                      </option>
-                    );
-                  })}
+                  {clientRows.map((c) => (
+                    <option key={c.id} value={c.numericId != null ? String(c.numericId) : ""} disabled={c.numericId == null}>
+                      {c.empresa} — {c.name}
+                      {c.numericId == null ? " (sem ID numérico)" : ""}
+                    </option>
+                  ))}
                 </select>
+              </div>
+              <div className="w-full min-w-[140px] sm:w-40 space-y-1">
+                <Label className="text-xs">ID numérico (manual)</Label>
+                <Input
+                  name="metrics_manual_client_id"
+                  autoComplete="off"
+                  value={metricsManualClientId}
+                  onChange={(e) => setMetricsManualClientId(e.target.value)}
+                  placeholder="Ex.: 12"
+                />
               </div>
               <div className="w-full min-w-[140px] sm:w-40 space-y-1">
                 <Label className="text-xs">Período</Label>
@@ -370,12 +466,11 @@ export function RelatoriosAdminPage() {
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
-          {reports.error && <p className="text-xs text-tag-amber">Não foi possível carregar relatórios.</p>}
-          {reports.loading && <p className="text-xs text-text-3">Carregando…</p>}
-          {!reports.loading && reports.data.length === 0 && (
+          {reportsLoading && <p className="text-xs text-text-3">Carregando…</p>}
+          {!reportsLoading && reportsList.length === 0 && (
             <p className="text-sm text-text-3">Nenhum relatório publicado. Clique em &quot;Publicar relatório&quot;.</p>
           )}
-          {reports.data.map((r) => (
+          {reportsList.map((r) => (
             <div
               key={r.id}
               className="flex flex-col gap-3 rounded-lg border border-border bg-card/50 p-4 sm:flex-row sm:items-start sm:justify-between"

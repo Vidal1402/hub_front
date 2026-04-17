@@ -21,12 +21,17 @@ export function useApiData<T>(path: string, initialData: T): ApiDataState<T> {
     },
     staleTime: STALE_TIME_MS,
     gcTime: GC_TIME_MS,
-    placeholderData: keepPreviousData,
+    placeholderData: path === "/api/clients" ? undefined : keepPreviousData,
     retry: 1,
     refetchOnWindowFocus: false,
+    refetchOnMount: path === "/api/clients" ? "always" : true,
   });
 
-  const data = (query.isError ? initialData : (query.data ?? initialData)) as T;
+  let raw = (query.isError ? initialData : (query.data ?? initialData)) as T;
+  if (path === "/api/clients" && Array.isArray(initialData) && !Array.isArray(raw)) {
+    raw = initialData;
+  }
+  const data = raw;
   const loading = query.isPending;
   const error = query.isError
     ? query.error instanceof Error
@@ -43,7 +48,7 @@ export function prefetchApiPath(queryClient: QueryClient, path: string) {
     queryKey: ["api", path],
     queryFn: async (): Promise<unknown> => {
       const res = await apiRequest<unknown>(path);
-      return normalizeApiPayload<unknown>(res, undefined as unknown);
+      return normalizeApiPayload<unknown>(res, [] as unknown);
     },
     staleTime: STALE_TIME_MS,
     gcTime: GC_TIME_MS,
@@ -99,10 +104,33 @@ function coerceListShape(inner: unknown, depth = 0): unknown {
   return inner;
 }
 
+function unwrapDataField(data: unknown): unknown {
+  if (typeof data === "string") {
+    const t = data.trim();
+    if (t.startsWith("[") || t.startsWith("{")) {
+      try {
+        return JSON.parse(t) as unknown;
+      } catch {
+        return data;
+      }
+    }
+  }
+  return data;
+}
+
 function normalizeApiPayload<T>(payload: unknown, initialData: T): T {
   if (payload === null || payload === undefined) return initialData;
   if (typeof payload === "object" && Object.prototype.hasOwnProperty.call(payload, "data")) {
-    const inner = coerceListShape((payload as { data: unknown }).data);
+    const raw = unwrapDataField((payload as { data: unknown }).data);
+    const inner = coerceListShape(raw);
+    /**
+     * Listas (ex.: GET /api/clients → `{ data: [...] }`): se `inner` não for array,
+     * o cache virava objeto e o `<select>` não renderizava opções.
+     */
+    if (Array.isArray(initialData) && !Array.isArray(inner)) {
+      if (Array.isArray(raw)) return raw as T;
+      return initialData;
+    }
     return inner as T;
   }
   if (typeof payload === "object" && Object.prototype.hasOwnProperty.call(payload, "user")) {
