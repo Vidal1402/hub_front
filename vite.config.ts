@@ -6,7 +6,10 @@ import { componentTagger } from "lovable-tagger";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const apiProxyTarget = (env.VITE_API_URL || "https://backflow-production.up.railway.app").replace(/\/+$/, "");
+  let apiProxyTarget = (env.VITE_API_URL || "https://backflow-production.up.railway.app").replace(/\/+$/, "");
+  if (apiProxyTarget.toLowerCase().endsWith("/api")) {
+    apiProxyTarget = apiProxyTarget.slice(0, -4).replace(/\/+$/, "");
+  }
 
   return {
     server: {

@@ -77,15 +77,25 @@ function userFromToken(token: string): ApiUser | null {
  * Em desenvolvimento, usa URL relativa `/api` na mesma origem do Vite (proxy em vite.config.ts),
  * evitando CORS no navegador. Em produção, usa `VITE_API_URL` ou o fallback.
  */
+function normalizeApiOrigin(raw: string): string {
+  let base = raw.replace(/\/+$/, "");
+  // Se alguém configurar `...railway.app/api`, o path já começa com `/api/...` e viraria `/api/api/...` (404).
+  if (base.toLowerCase().endsWith("/api")) {
+    base = base.slice(0, -4);
+    base = base.replace(/\/+$/, "");
+  }
+  return base;
+}
+
 export function getApiBaseUrl(): string {
   if (import.meta.env.DEV) {
     return "";
   }
-  const configured = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, "") || "";
+  const configured = normalizeApiOrigin((import.meta.env.VITE_API_URL as string | undefined)?.trim() || "");
   if (/^https?:\/\/localhost:8082$/i.test(configured)) {
     return PROD_FALLBACK_API;
   }
-  return configured || PROD_FALLBACK_API;
+  return normalizeApiOrigin(configured || PROD_FALLBACK_API);
 }
 
 export function getStoredSession(): ApiSession | null {
